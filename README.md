@@ -25,6 +25,6 @@ The markdown documentation walkthroughs the process of deriving the zonal statis
 
 ## Change analysis
 
-* <b> change_analysis_examples.Rmd </b>
+* <b> change_analysis_examples.Rmd </b> - short initial analysis of Insh Marshes statistics and the values used to flag change.
 
-* <b> change_statistics_analysis.Rmd </b>
+* <b> change_statistics_analysis.Rmd </b> - Interactive document demonstrating the statistics used for flagging change. Creates a local shiny app using the statistics text file generated from the 'zonal_stats' function, also hosted [here](https://btripps23.shinyapps.io/ChangeStatisticsAnalysis/).
