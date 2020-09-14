@@ -1,0 +1,563 @@
+---
+title: "CUU Habitat Change - Analysis of statistics for flagging change"
+author: "Becky Trippier"
+date: "08/09/2020"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+    css: style.css
+    includes:
+      before_body: header.html
+  pdf_document: default
+always_allow_html: yes
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+  library(sf)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(plotly)
+library(DT)
+library(shiny)
+library(plotly)
+```
+
+## Example site - Insh Marshes
+
+This report is to explore the statistics generated from the Sentinel-1 and Sentinel-2 data for the Insh Marshes and the different ways in which we can flag change.
+
+```{r, include=F}
+#load in the data and flag change
+#plot differences
+dirpath <- 'ChangeDetection/'
+hab_stat <- read.csv(paste0(dirpath,"Statistics/InshMarshes_EUNIS/Seasonal_statistics/InshMarshes_NDVI_seasonal_changestats.txt"))
+poly_stat <- read.csv(paste0(dirpath,"Statistics/InshMarshes_EUNIS/Seasonal_statistics/InshMarshes_NDVI_seasonal_stats.txt"))
+polygons <- sf::st_read(paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_1_clean.shp")) %>% sf::st_drop_geometry()
+
+#join the data
+poly_hab <- poly_stat %>% dplyr::left_join(polygons[,c('Id','EUNIS_DESC')], by=c('ID'='Id')) 
+hab_stat <- hab_stat %>% dplyr::select(-X) %>% rename(EUNIS_DESC = 'get.habclass.')
+poly_all <- poly_hab %>% dplyr::left_join(hab_stat,by=c('seasonyear','EUNIS_DESC')) 
+
+#order factor levels - again
+##get unique years
+all_lev <- stringr::str_split(levels(poly_all$seasonyear),"_",simplify=T) %>% data.frame()  %>% dplyr::mutate_if(is.character,as.factor)
+
+#order by season and year
+all_lev$X1 <- factor(all_lev$X1, levels = c('Spring','Summer','Autumn','Winter'),ordered=T)
+lev_sort <- all_lev %>% dplyr::arrange(X1) %>% dplyr::arrange(X2) %>% tidyr::unite(yearseason, sep="_")
+##sort levels in data
+poly_all$seasonyear <- factor(poly_all$seasonyear, levels = lev_sort$yearseason)
+
+```
+
+## Seasonal statistics
+
+### Polygons flagged as changed per SD range
+
+The tables explore where change is flagged as being outside of a range of 1, 2 or 3 standard deviations from the mean for the habitat type. This is flagging both positive change above the sd range and negative change below the sd range.
+
+```{r, echo=F}
+##above 3 SD
+polygon_change_1SD <- poly_all %>% dplyr::mutate(hab_mean_poschange = hab_mean+hab_meansd,
+                                      hab_mean_negchange = hab_mean-hab_meansd,
+                                      hab_median_poschange = hab_median+hab_mediansd,
+                                      hab_median_negchange = hab_median-hab_mediansd,
+                                      hab_min_poschange = hab_min+hab_minsd,
+                                      hab_min_negchange = hab_min-hab_minsd,
+                                      hab_max_poschange = hab_max+hab_maxsd,
+                                      hab_max_negchange = hab_max-hab_maxsd,
+                                      hab_Q1_poschange = hab_Q1+hab_Q1sd,
+                                      hab_Q1_negchange = hab_Q1-hab_Q1sd,
+                                      hab_Q3_poschange = hab_Q1+hab_Q3sd,
+                                      hab_Q3_negchange = hab_Q1-hab_Q3sd) %>% 
+   dplyr::mutate(meanchange = ifelse(mean <hab_mean_negchange |mean > hab_mean_poschange,1,0 ), 
+         medianchange = ifelse(median <hab_median_negchange | median > hab_median_poschange,1,0 ),
+         minchange = ifelse(min <hab_min_negchange | min>hab_min_poschange,1,0 ),
+         maxchange = ifelse(max <hab_max_negchange | max >hab_max_poschange,1,0 ),
+         Q1change = ifelse(Q1 <hab_Q1_negchange | Q1 >hab_Q1_poschange,1,0 ),
+         Q3change = ifelse(Q3 <hab_Q3_negchange | Q3 >hab_Q3_poschange,1,0 ))
+flagged_1SD <- polygon_change_1SD %>% dplyr::group_by(index, seasonyear, EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n(), meanchange=sum(meanchange),medianchange=sum(medianchange),Q1change=sum(Q1change),Q3change=sum(Q3change))
+
+# flag those above or below 2SD as change
+
+##above 2 SD
+polygon_change_2SD <- poly_all %>% dplyr::mutate(hab_mean_poschange = hab_mean+(2*hab_meansd),
+                                      hab_mean_negchange = hab_mean-(2*hab_meansd),
+                                      hab_median_poschange = hab_median+(2*hab_mediansd),
+                                      hab_median_negchange = hab_median-(2*hab_mediansd),
+                                      hab_min_poschange = hab_min+(2*hab_minsd),
+                                      hab_min_negchange = hab_min-(2*hab_minsd),
+                                      hab_max_poschange = hab_max+(2*hab_maxsd),
+                                      hab_max_negchange = hab_max-(2*hab_maxsd),
+                                      hab_Q1_poschange = hab_Q1+(2*hab_Q1sd),
+                                      hab_Q1_negchange = hab_Q1-(2*hab_Q1sd),
+                                      hab_Q3_poschange = hab_Q1+(2*hab_Q3sd),
+                                      hab_Q3_negchange = hab_Q1-(2*hab_Q3sd)) %>% 
+  dplyr::mutate(meanchange = ifelse(mean <hab_mean_negchange |mean > hab_mean_poschange,1,0 ), 
+         medianchange = ifelse(median <hab_median_negchange | median > hab_median_poschange,1,0 ),
+         minchange = ifelse(min <hab_min_negchange | min>hab_min_poschange,1,0 ),
+         maxchange = ifelse(max <hab_max_negchange | max >hab_max_poschange,1,0 ),
+         Q1change = ifelse(Q1 <hab_Q1_negchange | Q1 >hab_Q1_poschange,1,0 ),
+         Q3change = ifelse(Q3 <hab_Q3_negchange | Q3 >hab_Q3_poschange,1,0 ))
+flagged_2SD <- polygon_change_2SD %>% dplyr::group_by(index, seasonyear, EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n(),meanchange=sum(meanchange),medianchange=sum(medianchange),Q1change=sum(Q1change),Q3change=sum(Q3change))
+
+##above 3 SD
+polygon_change_3SD <- poly_all %>% dplyr::mutate(hab_mean_poschange = hab_mean+(3*hab_meansd),
+                                      hab_mean_negchange = hab_mean-(3*hab_meansd),
+                                      hab_median_poschange = hab_median+(3*hab_mediansd),
+                                      hab_median_negchange = hab_median-(3*hab_mediansd),
+                                      hab_min_poschange = hab_min+(3*hab_minsd),
+                                      hab_min_negchange = hab_min-(3*hab_minsd),
+                                      hab_max_poschange = hab_max+(3*hab_maxsd),
+                                      hab_max_negchange = hab_max-(3*hab_maxsd),
+                                      hab_Q1_poschange = hab_Q1+(3*hab_Q1sd),
+                                      hab_Q1_negchange = hab_Q1-(3*hab_Q1sd),
+                                      hab_Q3_poschange = hab_Q1+(3*hab_Q3sd),
+                                      hab_Q3_negchange = hab_Q1-(3*hab_Q3sd)) %>% 
+  dplyr::mutate(meanchange = ifelse(mean <hab_mean_negchange |mean > hab_mean_poschange,1,0 ), 
+         medianchange = ifelse(median <hab_median_negchange | median > hab_median_poschange,1,0 ),
+         minchange = ifelse(min <hab_min_negchange | min>hab_min_poschange,1,0 ),
+         maxchange = ifelse(max <hab_max_negchange | max >hab_max_poschange,1,0 ),
+         Q1change = ifelse(Q1 <hab_Q1_negchange | Q1 >hab_Q1_poschange,1,0 ),
+         Q3change = ifelse(Q3 <hab_Q3_negchange | Q3 >hab_Q3_poschange,1,0 ))
+flagged_3SD <- polygon_change_3SD %>% dplyr::group_by(index, seasonyear, EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n(),meanchange=sum(meanchange),medianchange=sum(medianchange),Q1change=sum(Q1change),Q3change=sum(Q3change))
+
+```
+
+
+```{r,echo=F}
+shiny::shinyApp(
+  ui=shiny::fluidPage(
+    shiny::selectInput('changeflag','Standard Deviations to flag change:',choices=c('1SD','2SD','3SD')),
+    shiny::selectInput('habitat','Habitat type:',choices=c(unique(as.character(flagged_1SD$EUNIS_DESC)))),
+    
+    DT::dataTableOutput('habtable')
+  ),
+  server=function(input,output){
+      
+      output$habtable <- DT::renderDataTable({
+            habitat_type <- input$habitat
+            flagSD <- input$changeflag
+            if(flagSD=='1SD'){
+              hab_sum <- flagged_1SD %>% dplyr::filter(EUNIS_DESC==habitat_type)
+              } else if(flagSD == '2SD'){
+                hab_sum <- flagged_2SD %>% dplyr::filter(EUNIS_DESC==habitat_type)
+              }else{
+                hab_sum <- flagged_3SD %>% dplyr::filter(EUNIS_DESC==habitat_type)
+              }
+            hab_sum
+    })
+  },
+
+  options = list(height = 700)
+)
+
+```
+
+
+
+### Average habitat statistics per season per year 
+
+This lets you view the statistics calculated per habitat type which each polygon is compared to. The first plot shows the 1SD and 2SD range, with the total number of polygons assessed that season and year shown as you hover over the mean.
+
+The below plots demonstrate within each season and year, the distribution of polygon data as both a histogram per season year and seasonal boxplots across years.
+
+```{r, echo=F}
+
+hab_stat <- poly_all %>%  dplyr::select(index, seasonyear, EUNIS_DESC, hab_mean, hab_meansd,hab_median,hab_mediansd,hab_Q1,hab_Q1sd,hab_Q3,hab_Q3sd) %>% unique()
+
+#get total polygons per habitat
+ totalhab <- poly_all %>% dplyr::select(ID,seasonyear, EUNIS_DESC) %>% dplyr::group_by(seasonyear,EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n()) %>% dplyr::left_join(hab_stat,by=c('seasonyear','EUNIS_DESC'))
+
+ 
+shiny::shinyApp(
+  ui=shiny::fluidPage(
+    shiny::selectInput('statistic','Statistic:',choices=c('mean','median','Q1','Q3')),
+    shiny::selectInput('habitat','Habitat type:',choices=c(unique(as.character(totalhab$EUNIS_DESC)))),
+    plotly::plotlyOutput('habgraph'),
+    shiny::selectInput('seasonyearhist','Season Year:',choices=c(as.character(unique(totalhab$seasonyear)))),
+     plotly::plotlyOutput('histplot'),
+        shiny::selectInput('season','Season:',choices=c('Spring','Summer','Autumn','Winter')),    
+    plotly::plotlyOutput('boxplot')
+    
+    ),
+  server=function(input,output){
+      
+      output$habgraph <- plotly::renderPlotly({
+            habitat_type <- input$habitat
+            stat <- input$statistic
+            hab_sum <- totalhab %>% dplyr::filter(EUNIS_DESC==habitat_type) %>% ungroup
+      p <- ggplot2::ggplot(hab_sum)+
+        ggplot2::geom_point(aes(x = seasonyear, y = get(paste0('hab_',stat)),group=totalpolygons), colour = "#3F9C35") +
+        ggplot2::geom_line(aes(x = seasonyear, y = get(paste0('hab_',stat)),group=EUNIS_DESC), colour = "#3F9C35") +
+        ggplot2::theme_classic()+
+        ggplot2::labs(y = paste0(stat,"NDVI")) +
+        ggplot2::theme(axis.title.x = element_blank(),axis.text.x=element_text(angle=90))
+      p2 <- p + 
+        ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-(2*get(paste0('hab_',stat,'sd'))),ymax=get(paste0('hab_',stat))+(2*get(paste0('hab_',stat,'sd')))), fill="red",alpha=0.1) + 
+        ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-get(paste0('hab_',stat,'sd')), ymax=get(paste0('hab_',stat))+get(paste0('hab_',stat,'sd'))), fill="grey70",alpha=0.5)
+      
+      plotly::ggplotly(p2)
+      
+    })
+      
+      output$histplot <- plotly::renderPlotly({
+        habitat_type <- input$habitat
+        seasonyear_select <- input$seasonyearhist
+        stat_select <- input$statistic
+        poly_sum <- poly_all %>% dplyr::filter(seasonyear==seasonyear_select & EUNIS_DESC==habitat_type) %>% dplyr::select(ID,mean,sd,median,Q1,Q3,date)
+        hist <-  ggplot2::ggplot(poly_sum, aes(x=get(stat_select))) +   ggplot2::geom_histogram(color="black", fill="white") +ggplot2::theme_classic() +
+          ggplot2::labs(x = paste(stat_select,"NDVI"))
+        plotly::ggplotly(hist)
+  })
+      
+   output$boxplot <- plotly::renderPlotly({
+         stat <- input$statistic
+         season_select <- input$season
+         habitat_type <- input$habitat
+         seas_sum <- poly_all %>% dplyr::filter(EUNIS_DESC==habitat_type & stringr::str_detect(seasonyear,season_select))
+         boxp <- ggplot2::ggplot(seas_sum,aes(x = seasonyear, y = get(stat),group=EUNIS_DESC)) +
+           geom_boxplot() +
+        ggplot2::theme_classic()+
+        ggplot2::labs(y = paste0(stat,"NDVI")) +
+        ggplot2::theme(axis.title.x = element_blank(),axis.text.x=element_text(angle=90))
+        plotly::ggplotly(boxp)
+      })   
+   },
+  options = list(height = 1600)
+  )
+
+```
+
+
+
+
+### Exploring polygon changes
+
+The plots below show seasonal polygon statistics compared to the mean seasonal habitat statistics, with ranges within 1SD (in grey) and 2SD (in red). Those listed below which are flagged as "change" are where a value for the season has fallen outside of the 2SD habitat range. 
+Several polygons have been picked out which show change:531,14993,6907,14519,3344,3862
+
+```{r, echo=F}
+
+shiny::shinyApp(
+  ui=shiny::fluidPage(
+        shiny::numericInput('polyid','Polygon ID:',value=531,min=min(polygon_change_2SD$ID),max=max(polygon_change_2SD$ID)),
+        shiny::selectInput('polystat','Statistic:',choices=c('mean','median','Q1','Q3')),
+        plotly::plotlyOutput('polygraph'),
+        DT::dataTableOutput('polytable')
+  ),
+  server=function(input,output){
+    output$polygraph <- plotly::renderPlotly({
+      stat <- input$polystat
+      pID <- as.numeric(input$polyid)
+      polygondat <- polygon_change_2SD %>% dplyr::filter(ID==pID) %>% dplyr::arrange(seasonyear)
+      poly <- ggplot2::ggplot(polygondat)+
+        ggplot2::geom_point(aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+        ggplot2::geom_line(aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+        ggplot2::geom_point(aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+        ggplot2::geom_line(aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+        ggplot2::theme_classic()+
+        ggplot2::labs(y = paste0(stat,"NDVI")) +
+        ggplot2::theme(axis.title.x = element_blank(),axis.text.x=element_text(angle=90))
+      poly2 <- poly +
+        geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-(2*get(paste0('hab_',stat,'sd'))), ymax=get(paste0('hab_',stat))+(2*get(paste0('hab_',stat,'sd')))), fill="red",alpha=0.1) + 
+        geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-get(paste0('hab_',stat,'sd')), ymax=get(paste0('hab_',stat))+get(paste0('hab_',stat,'sd'))), fill="grey70",alpha=0.5)
+    
+    ggplotly(poly2) 
+    })
+    
+    output$polytable <- DT::renderDataTable({
+      stat <- input$polystat
+      pID <- as.numeric(input$polyid)
+      polygondat <- polygon_change_2SD %>% dplyr::filter(ID==pID) %>% dplyr::arrange(seasonyear)
+      polygondat %>% 
+        dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
+    })
+
+  },
+  options = list(height = 1000)
+)
+
+```
+
+
+
+## Monthly Statistics
+
+```{r, include=F}
+#load in the data and flag change
+#plot differences
+dirpath <- 'ChangeDetection/'
+hab_stat_month <- read.csv(paste0(dirpath,"Statistics/InshMarshes_EUNIS/Monthly_statistics/InshMarshes_NDVI_monthly_changestats.txt"))
+poly_stat_month <- read.csv(paste0(dirpath,"Statistics/InshMarshes_EUNIS/Monthly_statistics/InshMarshes_NDVI_monthly_stats.txt"))
+polygons <- sf::st_read(paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_1_clean.shp")) %>% sf::st_drop_geometry()
+
+#join the data
+poly_hab_month <- poly_stat_month %>% dplyr::left_join(polygons[,c('Id','EUNIS_DESC')], by=c('ID'='Id')) 
+#create monthdate column
+month_year <- poly_hab_month %>%
+      dplyr::mutate(month=ifelse(month<10,as.character(paste0("0",month)),as.character(month))) %>%
+      dplyr::mutate(year=as.character(year)) %>%
+      dplyr::mutate(monthname = stringr::str_glue("{year}-{month}")) %>%
+      dplyr::mutate(monthdate = as.factor(zoo::as.yearmon(monthname)))
+
+hab_stat_month <- hab_stat_month %>% dplyr::select(-X) %>% rename(EUNIS_DESC = 'get.habclass.')
+poly_all_monthly <- month_year %>% dplyr::left_join(hab_stat_month,by=c('monthdate','EUNIS_DESC')) 
+poly_all_monthly$monthdate <- as.factor(poly_all_monthly$monthdate)
+
+#order by month and year
+
+monthTS <- tibble::tibble(expand.grid(month = 1:12, year = 2014:2020)) %>%
+  dplyr::left_join(tibble::tibble(month = 1:12, monthname = month.abb)) %>%
+  dplyr::group_by(year) %>%
+  dplyr::mutate(FULLNAME = paste0(monthname, " ", year),
+                plotOrder = dplyr::row_number()) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate_if(is.factor, as.character)
+
+monthTS$FULLNAME <- factor(monthTS$FULLNAME,ordered=T)
+##sort levels in data
+poly_all_monthly$monthdate <- factor(poly_all_monthly$monthdate, levels = monthTS$FULLNAME )
+
+```
+
+### Polygons flagged as changed per SD range
+
+The tables explore where change is flagged as being outside of a range of 1, 2 or 3 standard deviations from the mean for the habitat type. This is flagging both positive change above the sd range and negative change below the sd range.
+
+```{r, echo=F}
+##above 3 SD
+polygon_changemon_1SD <- poly_all_monthly %>% dplyr::mutate(hab_mean_poschange = hab_mean+hab_meansd,
+                                      hab_mean_negchange = hab_mean-hab_meansd,
+                                      hab_median_poschange = hab_median+hab_mediansd,
+                                      hab_median_negchange = hab_median-hab_mediansd,
+                                      hab_min_poschange = hab_min+hab_minsd,
+                                      hab_min_negchange = hab_min-hab_minsd,
+                                      hab_max_poschange = hab_max+hab_maxsd,
+                                      hab_max_negchange = hab_max-hab_maxsd,
+                                      hab_Q1_poschange = hab_Q1+hab_Q1sd,
+                                      hab_Q1_negchange = hab_Q1-hab_Q1sd,
+                                      hab_Q3_poschange = hab_Q1+hab_Q3sd,
+                                      hab_Q3_negchange = hab_Q1-hab_Q3sd) %>% 
+   dplyr::mutate(meanchange = ifelse(mean <hab_mean_negchange |mean > hab_mean_poschange,1,0 ), 
+         medianchange = ifelse(median <hab_median_negchange | median > hab_median_poschange,1,0 ),
+         minchange = ifelse(min <hab_min_negchange | min>hab_min_poschange,1,0 ),
+         maxchange = ifelse(max <hab_max_negchange | max >hab_max_poschange,1,0 ),
+         Q1change = ifelse(Q1 <hab_Q1_negchange | Q1 >hab_Q1_poschange,1,0 ),
+         Q3change = ifelse(Q3 <hab_Q3_negchange | Q3 >hab_Q3_poschange,1,0 ))
+flaggedmon_1SD <- polygon_changemon_1SD %>% dplyr::group_by(index, monthdate, EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n(), meanchange=sum(meanchange),medianchange=sum(medianchange),Q1change=sum(Q1change),Q3change=sum(Q3change))
+
+# flag those above or below 2SD as change
+
+##above 2 SD
+polygon_changemon_2SD <- poly_all_monthly %>% dplyr::mutate(hab_mean_poschange = hab_mean+(2*hab_meansd),
+                                      hab_mean_negchange = hab_mean-(2*hab_meansd),
+                                      hab_median_poschange = hab_median+(2*hab_mediansd),
+                                      hab_median_negchange = hab_median-(2*hab_mediansd),
+                                      hab_min_poschange = hab_min+(2*hab_minsd),
+                                      hab_min_negchange = hab_min-(2*hab_minsd),
+                                      hab_max_poschange = hab_max+(2*hab_maxsd),
+                                      hab_max_negchange = hab_max-(2*hab_maxsd),
+                                      hab_Q1_poschange = hab_Q1+(2*hab_Q1sd),
+                                      hab_Q1_negchange = hab_Q1-(2*hab_Q1sd),
+                                      hab_Q3_poschange = hab_Q1+(2*hab_Q3sd),
+                                      hab_Q3_negchange = hab_Q1-(2*hab_Q3sd)) %>% 
+  dplyr::mutate(meanchange = ifelse(mean <hab_mean_negchange |mean > hab_mean_poschange,1,0 ), 
+         medianchange = ifelse(median <hab_median_negchange | median > hab_median_poschange,1,0 ),
+         minchange = ifelse(min <hab_min_negchange | min>hab_min_poschange,1,0 ),
+         maxchange = ifelse(max <hab_max_negchange | max >hab_max_poschange,1,0 ),
+         Q1change = ifelse(Q1 <hab_Q1_negchange | Q1 >hab_Q1_poschange,1,0 ),
+         Q3change = ifelse(Q3 <hab_Q3_negchange | Q3 >hab_Q3_poschange,1,0 ))
+flaggedmon_2SD <- polygon_changemon_2SD %>% dplyr::group_by(index, monthdate, EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n(),meanchange=sum(meanchange),medianchange=sum(medianchange),Q1change=sum(Q1change),Q3change=sum(Q3change))
+
+##above 3 SD
+polygon_changemon_3SD <- poly_all_monthly %>% dplyr::mutate(hab_mean_poschange = hab_mean+(3*hab_meansd),
+                                      hab_mean_negchange = hab_mean-(3*hab_meansd),
+                                      hab_median_poschange = hab_median+(3*hab_mediansd),
+                                      hab_median_negchange = hab_median-(3*hab_mediansd),
+                                      hab_min_poschange = hab_min+(3*hab_minsd),
+                                      hab_min_negchange = hab_min-(3*hab_minsd),
+                                      hab_max_poschange = hab_max+(3*hab_maxsd),
+                                      hab_max_negchange = hab_max-(3*hab_maxsd),
+                                      hab_Q1_poschange = hab_Q1+(3*hab_Q1sd),
+                                      hab_Q1_negchange = hab_Q1-(3*hab_Q1sd),
+                                      hab_Q3_poschange = hab_Q1+(3*hab_Q3sd),
+                                      hab_Q3_negchange = hab_Q1-(3*hab_Q3sd)) %>% 
+  dplyr::mutate(meanchange = ifelse(mean <hab_mean_negchange |mean > hab_mean_poschange,1,0 ), 
+         medianchange = ifelse(median <hab_median_negchange | median > hab_median_poschange,1,0 ),
+         minchange = ifelse(min <hab_min_negchange | min>hab_min_poschange,1,0 ),
+         maxchange = ifelse(max <hab_max_negchange | max >hab_max_poschange,1,0 ),
+         Q1change = ifelse(Q1 <hab_Q1_negchange | Q1 >hab_Q1_poschange,1,0 ),
+         Q3change = ifelse(Q3 <hab_Q3_negchange | Q3 >hab_Q3_poschange,1,0 ))
+flaggedmon_3SD <- polygon_changemon_3SD %>% dplyr::group_by(index, monthdate, EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n(),meanchange=sum(meanchange),medianchange=sum(medianchange),Q1change=sum(Q1change),Q3change=sum(Q3change))
+
+
+```
+
+
+```{r,echo=F}
+shiny::shinyApp(
+  ui=shiny::fluidPage(
+    shiny::selectInput('changeflag','Standard Deviations to flag change:',choices=c('1SD','2SD','3SD')),
+    shiny::selectInput('habitat','Habitat type:',choices=c(unique(as.character(flagged_1SD$EUNIS_DESC)))),
+    
+    DT::dataTableOutput('habtable')
+  ),
+  server=function(input,output){
+      
+      output$habtable <- DT::renderDataTable({
+            habitat_type <- input$habitat
+            flagSD <- input$changeflag
+            if(flagSD=='1SD'){
+              hab_sum <- flaggedmon_1SD %>% dplyr::filter(EUNIS_DESC==habitat_type)
+              } else if(flagSD == '2SD'){
+                hab_sum <- flaggedmon_2SD %>% dplyr::filter(EUNIS_DESC==habitat_type)
+              }else{
+                hab_sum <- flaggedmon_3SD %>% dplyr::filter(EUNIS_DESC==habitat_type)
+              }
+            hab_sum
+    })
+  },
+
+  options = list(height = 700)
+)
+
+```
+
+
+
+### Average habitat statistics per month per year 
+
+This lets you view the statistics calculated per habitat type which each polygon is compared to. The first plot shows the 1SD and 2SD range, with the total number of polygons assessed that month and year shown as you hover over the mean.
+
+The below plots demonstrate within each month and year, the distribution of polygon data as both a histogram per month year and monthly boxplots across years.
+
+```{r, echo=F}
+
+hab_statmon <- poly_all_monthly %>%  dplyr::select(index, monthdate, EUNIS_DESC, hab_mean, hab_meansd,hab_median,hab_mediansd,hab_Q1,hab_Q1sd,hab_Q3,hab_Q3sd) %>% unique()
+
+#get total polygons per habitat
+ totalhabmon <- poly_all_monthly %>% dplyr::select(ID,monthdate, EUNIS_DESC) %>% dplyr::group_by(monthdate,EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n()) %>% dplyr::left_join(hab_statmon,by=c('monthdate','EUNIS_DESC')) 
+ 
+shiny::shinyApp(
+  ui=shiny::fluidPage(
+    shiny::selectInput('statistic','Statistic:',choices=c('mean','median','Q1','Q3')),
+    shiny::selectInput('habitat','Habitat type:',choices=c(unique(as.character(totalhabmon$EUNIS_DESC)))),
+    plotly::plotlyOutput('habgraph'),
+    shiny::selectInput('monthyearhist','Month Year:',choices=c(as.character(unique(totalhabmon$monthdate)))),
+     plotly::plotlyOutput('histplot'),
+        shiny::selectInput('month','Month:',choices=c('Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec')),    
+    plotly::plotlyOutput('boxplot')
+    
+
+  ),
+  server=function(input,output){
+      
+      output$habgraph <- plotly::renderPlotly({
+            habitat_type <- input$habitat
+            stat <- input$statistic
+            hab_sum <- totalhabmon %>% dplyr::filter(EUNIS_DESC==habitat_type)
+      p <- ggplot2::ggplot(hab_sum)+
+        ggplot2::geom_point(aes(x = monthdate, y = get(paste0('hab_',stat)),group=totalpolygons), colour = "#3F9C35") +
+        ggplot2::geom_line(aes(x = monthdate, y = get(paste0('hab_',stat)),group=EUNIS_DESC), colour = "#3F9C35") +
+        ggplot2::theme_classic()+
+        ggplot2::labs(y = paste0(stat,"NDVI")) +
+        ggplot2::theme(axis.title.x = element_blank(),axis.text.x=element_text(angle=90))
+      p2 <- p + 
+        ggplot2::geom_ribbon(aes(x = 1:length(monthdate), ymin = get(paste0('hab_',stat))-(2*get(paste0('hab_',stat,'sd'))),ymax=get(paste0('hab_',stat))+(2*get(paste0('hab_',stat,'sd')))), fill="red",alpha=0.1) + 
+        ggplot2::geom_ribbon(aes(x = 1:length(monthdate), ymin = get(paste0('hab_',stat))-get(paste0('hab_',stat,'sd')), ymax=get(paste0('hab_',stat))+get(paste0('hab_',stat,'sd'))), fill="grey70",alpha=0.5)
+      
+      plotly::ggplotly(p2)
+      
+    })
+      
+      output$histplot <- plotly::renderPlotly({
+        habitat_type <- input$habitat
+        monthyear_select <- input$monthyearhist
+        stat_select <- input$statistic
+        poly_sum <- poly_all_monthly %>% dplyr::filter(monthdate==monthyear_select & EUNIS_DESC==habitat_type) %>% dplyr::select(ID,mean,sd,median,Q1,Q3,date)
+        hist <-  ggplot2::ggplot(poly_sum, aes(x=get(stat_select))) +   ggplot2::geom_histogram(color="black", fill="white") +ggplot2::theme_classic() +
+          ggplot2::labs(x = paste(stat_select,"NDVI"))
+        plotly::ggplotly(hist)
+  })
+      
+   output$boxplot <- plotly::renderPlotly({
+         stat <- input$statistic
+         month_select <- input$month
+         habitat_type <- input$habitat
+         seas_sum <- poly_all_monthly %>% dplyr::filter(EUNIS_DESC==habitat_type & stringr::str_detect(monthdate,month_select))
+         boxp <- ggplot2::ggplot(seas_sum,aes(x = monthdate, y = get(stat),group=EUNIS_DESC)) +
+           geom_boxplot() +
+        ggplot2::theme_classic()+
+        ggplot2::labs(y = paste0(stat,"NDVI")) +
+        ggplot2::theme(axis.title.x = element_blank(),axis.text.x=element_text(angle=90))
+        plotly::ggplotly(boxp)
+      })   
+      
+      
+ },
+  options = list(height = 1600)
+)
+
+
+
+```
+
+
+
+### Exploring polygon changes
+
+The plots below show monthly polygon statistics compared to the mean monthly habitat statistics, with ranges within 1SD (in grey) and 2SD (in red). Those listed below which are flagged as "change" are where a value for the month has fallen outside of the 2SD habitat range. 
+
+Several polygons have been picked out which show change:531,14993,6907,14519,3344,3862
+
+```{r, echo=F}
+
+shiny::shinyApp(
+  ui=shiny::fluidPage(
+        shiny::numericInput('polyid','Polygon ID:',value=531,min=min(polygon_changemon_2SD$ID),max=max(polygon_changemon_2SD$ID)),
+        shiny::selectInput('polystat','Statistic:',choices=c('mean','median','Q1','Q3')),
+        plotly::plotlyOutput('polygraph'),
+        DT::dataTableOutput('polytable')
+  ),
+  server=function(input,output){
+    output$polygraph <- plotly::renderPlotly({
+      stat <- input$polystat
+      pID <- as.numeric(input$polyid)
+      polygondat <- polygon_changemon_2SD %>% dplyr::filter(ID==pID) %>% dplyr::arrange(monthdate)
+      poly <- ggplot2::ggplot(polygondat)+
+        ggplot2::geom_point(aes(x = monthdate, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+        ggplot2::geom_line(aes(x = monthdate, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+        ggplot2::geom_point(aes(x = monthdate, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+        ggplot2::geom_line(aes(x = monthdate, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+        ggplot2::theme_classic()+
+        ggplot2::labs(y = paste0(stat,"NDVI")) +
+        ggplot2::theme(axis.title.x = element_blank(),axis.text.x=element_text(angle=90))
+      poly2 <- poly +
+        geom_ribbon(aes(x = 1:length(monthdate), ymin = get(paste0('hab_',stat))-(2*get(paste0('hab_',stat,'sd'))), ymax=get(paste0('hab_',stat))+(2*get(paste0('hab_',stat,'sd')))), fill="red",alpha=0.1) + 
+        geom_ribbon(aes(x = 1:length(monthdate), ymin = get(paste0('hab_',stat))-get(paste0('hab_',stat,'sd')), ymax=get(paste0('hab_',stat))+get(paste0('hab_',stat,'sd'))), fill="grey70",alpha=0.5)
+    
+    ggplotly(poly2) 
+    })
+    
+    output$polytable <- DT::renderDataTable({
+            pID <- as.numeric(input$polyid)
+      stat <- input$polystat
+            polygondat <- polygon_changemon_2SD %>% dplyr::filter(ID==pID) %>% dplyr::arrange(monthdate)
+      polygondat %>% 
+        dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,monthdate,date)
+    })
+
+  },
+  options = list(height = 1300)
+)
+
+```
+
+

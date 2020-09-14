@@ -1,0 +1,250 @@
+---
+title: "CUU_ChangeDetection English sites"
+author: "Graham French"
+date: '`r Sys.Date()`'
+output: html_document
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE, warning=FALSE, comment=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+library(sf)
+library(dplyr)
+library(purrr)
+library(furrr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(tmap)
+library(janitor)
+library(fs)
+library(readxl)
+library(magrittr)
+library(units)
+library(vroom)
+```
+
+```{r vm_source_files}
+#library(HabChangeDetection)
+```
+
+```{r display_site, echo=FALSE}
+display_site <- function(site_polygons, bounding_box) {
+  tmap::tmap_mode("view")
+  tmap::tm_shape(bounding_box) +
+    tmap::tm_fill(col = "grey", alpha = 0.5) +
+    tmap::tm_borders(col = "red", lwd = 2) +
+    tmap::tm_shape(site_polygons) +
+    tmap::tm_fill(col = "grey", alpha = 0.8) +
+    tmap::tm_borders(col = "black", lwd = 1) +
+    tmap::tm_basemap(leaflet::providers$OpenStreetMap) +
+    tmap::tm_scale_bar()
+}
+```
+
+```{r display_table, echo=FALSE}
+library(reactable)
+display_table <- function(data, rows = nrow(data)) {
+  reactable(data[1:rows, ], fullWidth = FALSE, searchable = TRUE, 
+            compact = TRUE, wrap = FALSE, resizable = TRUE,
+            defaultColDef = colDef(align = "left"),
+            showPageSizeOptions = TRUE, pageSizeOptions = c(10, nrow(data)),
+            class = "table")
+}
+```
+
+```{r network_paths, eval=FALSE}
+site_folder_path <- path("Change Detection/Sites")
+segmentation_folder_path <- path("ChangeDetection/Data/Habitat_maps/England")
+s1_granules_folder_path <- path("ChangeDetection/Data/Sentinel1")
+s2_granules_folder_path <- path("ChangeDetection/Data/Sentinel2")
+```
+  
+## Dark Peak site
+
+**S2 Granule:** T30UWE
+
+* Dark Peak SSSI (Blanket bog, managed by peat restoration, grip blocking and *Sphagnum* propagation). Interest in wetness from NDMI and NDVI
+
+### Formatting site layer
+
+```{r format_dark_peak_site,eval=FALSE}
+# network: st_read(path(site_folder_path, "DarkPeakSSSI", "DarkPeak_dissolved.shp"))
+dark_peak_site <- sf::st_read(path(site_folder_path, "england", "DarkPeak_dissolved.shp")) %>% 
+  janitor::clean_names() %>% 
+  dplyr::rename(name = sssi_name,
+         code = reference) %>% 
+  dplyr::select(name, code)
+dark_peak_bounding_box <- create_square_bounding_box_polygon(dark_peak_site)
+```
+
+```{r export_dark_peak_bounding_box_as_kml, eval=FALSE}
+sf::st_write(dark_peak_bounding_box, 
+        path(site_folder_path, "bounding_box", "dark_peak_bounding_box.kml"))
+```
+
+```{r display_dark_peak_site, fig.width=8, fig.height=4,eval=FALSE}
+display_site(dark_peak_site, dark_peak_bounding_box)
+```
+
+### Formatting Spatial Framework layer 
+
+Spatial Framework taken from Natural England's Priority Habitat Inventory (PHI) Map. Paula wishes to keep the polygons where no main priority habitat is listed or there is "No main habitat but additional habitats present". It won't be possible to create change thresholds for these as this is based on mean indices values across each habitat. 
+
+Removed 7053 polygons with area less than 100m^2^ and added row numbers as an unique polygon_id. 31,462 polygons included
+
+```{r format_dark_peak_segmentation_layer, eval=FALSE}
+# network: st_read(path(segmentation_folder_path, "DarkPeak_LE_Segments_Spatialjoin_10m.shp"))
+dark_peak_segmentation_raw <- sf::st_read(path(segmentation_folder_path, "England", "DarkPeak_LE_Segments_Spatialjoin_10m.shp"))
+
+dark_peak_segmentation_formatted <- dark_peak_segmentation_raw %>% 
+  dplyr::rename(main_habit = Main_Habit) %>% 
+  dplyr::mutate(across(where(is.factor), as.character),
+         main_habit = dplyr::if_else(is.na(main_habit), "No main priority habitat", main_habit),
+         area_m = sf::st_area(geometry)) %>% 
+  drop_units() %>% 
+  dplyr::filter(area_m > 100) %>% 
+  dplyr::mutate(polygon_id = dplyr::row_number(), .before = dplyr::everything()) 
+
+sf::st_write(dark_peak_segmentation_formatted, fs::path(segmentation_folder_path, "England", "DarkPeak_LE_Segments_Spatialjoin_10m_formatted.shp"))
+```
+
+### Running the zonal stats
+
+```{r dark_peak_zonal_stats, eval=FALSE}
+tictoc::tic()
+dirpath <- "filepath/"
+zonal_stats(polys = paste0(dirpath,'segmentation/England/DarkPeak_LE_Segments_Spatialjoin_10m_formatted.shp'),
+            polyfield = 'polygon_id',
+            s2path = paste0(dirpath,'granules/s2/dark_peak/'),
+            s1path = paste0(dirpath,'granules/s1/dark_peak/'),
+            outfolder = paste0(dirpath,'output/dark_peak/'),
+            sitename = 'DarkPeak')
+
+# finished message
+sink(fs::path(output_path, 'dark_peak', 'ZonalStats', 'FINISHED.txt'))
+lubridate::now()
+tictoc::toc()
+sink()
+```
+
+```{r dark_peak_hills_combined_stats_file, eval=FALSE}
+# replaces combine and write out results in zonal_stats function as this led to match error and was commented out
+file_path <- path(output_path, 'dark_peak', 'ZonalStats')
+dir_ls(path(file_path, "zonal_statistics")) %>% 
+  vroom::vroom(col_select = -1) %>% 
+  write.csv(path(file_path, "DarkPeak_zonal_stats.txt"))
+```
+
+```{r dark_peak_hills_reduce_rgb_image, eval=FALSE}
+# reduces the RGB images by a third (run in parallel)
+future::plan(multiprocess)
+path(output_path, "dark_peak", "ZonalStats", "s2", "thumbs") %>% 
+  dir_ls(., glob = "*RGB.png") %>% 
+  furrr::future_map(reduce_image_size, .progress = TRUE)
+```
+
+### Calculate monthly and seasonal summaries and change stats
+
+```{r dark_peak_summary_stats, eval=FALSE}
+change_stats(sitefile = paste0(dir_path,'output/dark_peak/ZonalStats/DarkPeak_zonal_stats.txt'),
+             outfolder = paste0(dir_path,'output/dark_peak/'),
+             polygons = paste0(dir_path,'segmentation/England/DarkPeak_LE_Segments_Spatialjoin_10m_formatted.shp'),
+             polyid = 'polygon_id',
+             habclass = 'main_habit')
+```
+
+## Malvern Hills site
+
+**S2 Granule:** T30UWC
+
+* Malven Hills AONB (grassland habitats and deciduous woodland, managed by grazing) - Malvern_Hills_Change_Det_Pilot_Area. Different grazing or management patterns likely to lead to change
+
+### Formatting site layer
+
+```{r format_malven_hills_site,eval=FALSE}
+# network: st_read(path(site_folder_path, "Malvern_Hills_Change_Det_Pilot_Area.shp"))
+malven_hills_site <- sf::st_read(path(site_folder_path, "england", "Malvern_Hills_Change_Det_Pilot_Area.shp")) %>% 
+  janitor::clean_names() %>%
+  dplyr::select(name, code)
+malven_hills_bounding_box <- create_square_bounding_box_polygon(malven_hills_site)
+```
+
+```{r export_malven_hills_bounding_box_as_kml, eval=FALSE}
+sf::st_write(malven_hills_bounding_box, 
+       path(site_folder_path, "bounding_box", "malven_hills_bounding_box.kml"))
+```
+
+```{r display_malven_hills_site, fig.width=8, fig.height=4,eval=FALSE}
+display_site(malven_hills_site, malven_hills_bounding_box )
+```
+
+### Formatting Spatial Framework layer 
+
+These are taken from Natural England's Priority Habitat Inventory (PHI) Map. Paula wishes to keep the polygons where no main priority habitat is listed or there is "No main habitat but additional habitats present". It won't be possible to create change thresholds for these as this is based on mean indices values across each habitat. 
+
+Removed 2807 polygons with area less than 100m^2^ and added row numbers as an unique polygon_id. 13,814 polygons included
+
+```{r format_malvern_hills_segmentation_layer, eval=FALSE}
+# network: st_read(path(segmentation_folder_path, "MalvernHills_LE_Segments_PHI_SpaJoin_25m.shp"))
+malven_hills_segmentation_raw <- sf::st_read(path(segmentation_folder_path, "England", "MalvernHills_LE_Segments_PHI_SpaJoin_25m.shp"))
+
+malven_hills_segmentation_formatted <- malven_hills_segmentation_raw %>% 
+  dplyr::rename(main_habit = Main_Habit) %>% 
+  dplyr::mutate(across(where(is.factor), as.character),
+         main_habit =  dplyr::if_else(is.na(main_habit), "No main priority habitat", main_habit),
+         area_m = sf::st_area(geometry)) %>% 
+  units::drop_units() %>% 
+  dplyr::filter(area_m > 100) %>% 
+  dplyr::mutate(polygon_id =  dplyr::row_number(), .before =  dplyr::everything())
+
+sf::st_write(malven_hills_segmentation_formatted, path(segmentation_folder_path, "England", "MalvernHills_LE_Segments_PHI_SpaJoin_25m_formatted.shp"))
+```
+
+### Running the zonal stats
+
+```{r malvern_hills_zonal_stats, eval=FALSE}
+tictoc::tic()
+zonal_stats(polys = paste0(segmentation_folder_path, 'England/MalvernHills_LE_Segments_PHI_SpaJoin_25m_formatted.shp'),
+            polyfield = 'polygon_id',
+            s2path = paste0(granules_folder_path, 's2/malvern_hills/'),
+            s1path = paste0(granules_folder_path, 's1/malvern_hills/'),
+            outfolder = paste0(output_path, 'malvern_hills/'),
+            sitename = 'MalvernHills')
+
+# finished message
+sink(fs::path(output_path, 'malvern_hills', 'ZonalStats', 'FINISHED.txt'))
+lubridate::now()
+tictoc::toc()
+sink()
+```
+
+```{r malvern_hills_combined_stats_file, eval=FALSE}
+# replaces combine and write out results in zonal_stats function as this led to match error and was commented out
+file_path <- fs::path(output_path, 'malvern_hills', 'ZonalStats')
+dir_ls(path(file_path, "zonal_statistics")) %>% 
+  vroom::vroom(col_select = -1) %>% 
+  write.csv(path(file_path, "MalvernHills_zonal_stats.txt"))
+```
+
+```{r malvern_hills_reduce_rgb_image, eval=FALSE}
+# reduces the RGB images by a third (runs in parallel)
+future::plan(multiprocess)
+path(output_path, "malvern_hills", "ZonalStats", "s2", "thumbs") %>% 
+  dir_ls(., glob = "*RGB.png") %>% 
+  furrr::future_map(reduce_image_size, .progress = TRUE)
+```
+
+### Calculate monthly and seasonal summaries and change stats
+
+```{r malvern_hills_summary_stats, eval=FALSE}
+change_stats(sitefile = paste0(dir_path,'output/malvern_hills/ZonalStats/MalvernHills_zonal_stats.txt'),
+             outfolder = paste0(dir_path,'output/malvern_hills/'),
+             polygons = paste0(dir_path,'segmentation/England/MalvernHills_LE_Segments_PHI_SpaJoin_25m_formatted.shp'),
+             polyid = 'polygon_id',
+             habclass = 'main_habit')
+```
+
+
+

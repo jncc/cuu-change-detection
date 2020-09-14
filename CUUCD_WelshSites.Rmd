@@ -1,0 +1,199 @@
+---
+title: "CUU_ChangeDetection Welsh sites"
+author: "Izzy Hassall,Becky Trippier"
+date: "23/07/2020"
+output:
+  html_document:
+  pdf_document: default
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#library(HabChangeDetection)
+library(sf)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(tmap)
+library(janitor)
+library(fs)
+library(readxl)
+library(magrittr)
+
+source('habitat_change_detection_functions.R')
+
+```
+
+```{r display_site,include=F,eval=F}
+display_site <- function(site_polygons, bounding_box) {
+  tmap::tmap_mode("view")
+  tmap::tm_shape(bounding_box) +
+    tmap::tm_fill(col = "grey", alpha = 0.5) +
+    tmap::tm_borders(col = "red", lwd = 2) +
+    tmap::tm_shape(site_polygons) +
+    tmap::tm_fill(col = "grey", alpha = 0.8) +
+    tmap::tm_borders(col = "black", lwd = 1) +
+    tmap::tm_basemap(leaflet::providers$OpenStreetMap) +
+    tmap::tm_scale_bar()
+}
+```
+
+```{r display_table, echo=FALSE,include=F}
+library(reactable)
+display_table <- function(data, rows = nrow(data)) {
+  reactable::reactable(data[1:rows, ], fullWidth = FALSE, searchable = TRUE, 
+            compact = TRUE, wrap = FALSE, resizable = TRUE,
+            defaultColDef = colDef(align = "left"),
+            showPageSizeOptions = TRUE, pageSizeOptions = c(10, nrow(data)),
+            class = "table")
+}
+```
+
+```{r get_granule_present_month,include=F}
+# at least one S2 granules present per month
+get_granule_present_month <- function(granules_dataset){
+  granules_dataset %>% 
+    dplyr::mutate(year = year(capture_date),
+                  month = month(capture_date)) %>% 
+    dplyr::group_by(year, month) %>% 
+    dplyr::tally() %>% 
+    dplyr::full_join(tidyr::crossing(year = seq(2015, 2020), month = seq(1, 12))) %>% 
+    dplyr::mutate(n = tidyr::replace_na(n, 0)) %>% 
+    dplyr::arrange(year, month) %>% 
+    dplyr::mutate(month = month.abb[month]) %>% 
+    tidyr::pivot_wider(names_from = month, values_from = n) %>% 
+    dplyr::mutate(across(.cols = Jan:Dec, .fns = function(x){if(x > 0){ x / x } else 0})) %>% 
+    janitor::adorn_totals(where = "col")
+}
+```
+
+```{r paths, include=F,eval=F}
+site_folder_path <- path("Sites/")
+s2_folder_path <- path("ChangeDetection/Data/Sentinel2/")
+s1_folder_path <- path("ChangeDetection/Data/Sentinel1/")
+hab_map_path<-path("ChangeDetection/Data/Habitat_maps/Wales/Phase_1_corrected_20200814/")
+```
+
+## Copernicus User Uptake - Change detection
+
+Welsh sites:
+
+* Cors Bodeilio site (10km^2^)  
+* Rhos Tonyrefail square site (10km^2^)
+
+Spatial frameworks:
+
+* Phase 1 Habitat Map of Wales
+* Finer scale UKHab classification segmentation
+
+
+### Cors Bodeilio site (10km^2^) 
+
+**S2 Granule:** T30UVE
+
+* Cors Bodeilio (fen)
+
+```{r corssite,include=FALSE, fig.width=8, fig.height=4,eval=F}
+cors_bodeilio_site <- sf::st_read(path(site_folder_path, "CorsBodeilio.shp")) %>% 
+  janitor::clean_names() %>% 
+  dplyr::mutate(name = "Cors Bodeilio",
+         code = 1)
+cors_bodeilio_bounding_box <- create_square_bounding_box_polygon(cors_bodeilio_site)
+# sf::st_write(cors_bodeilio_bounding_box, 
+#        path(site_folder_path, "bounding_box", "cors_bodeilio_bounding_box.kml"))
+display_site(cors_bodeilio_site, cors_bodeilio_bounding_box)
+
+```
+
+### S1 and S2 Granules
+
+### Cleaning the Spatial framework
+
+The Cors Bodeilio Phase 1 shapefile was cleaned by removing polygons of <0.01 ha (100m2) and unwanted habitat covers. A total of 87 polygons were removed.   
+
+```{r clean_corsbodeilio_Phase1_habitat_layer,eval=FALSE}
+cors_raw<-sf::st_read("CorsBodeilio_Phase1_names.shp")
+cors_clean<-cors_raw %>% dplyr::filter(!Name %in% c("Intertidal mud/sand","Intertidal cobbles/shingle","Intertidal rocks/boulders","Salt marsh","Mud/sand above mhw","Shingle/gravel above mhw","Rocks/boulders above mhw","Open dune","Coastal grassland")) %>% dplyr::filter(AREA_HA>=0.01)
+
+st_write(cors_clean,"Cleaned/CorsBodeilio_Phase1_names_cleaned.shp")
+```
+
+### Running the zonal stats
+```{r run_zonal_stats_corsbodeilio,eval=FALSE}
+dirpath<-"ChangeDetection/"
+
+zonal_stats(polys=paste0(dirpath,'Data/Habitat_maps/Wales/Phase_1_corrected_20200814/Cleaned/CorsBodeilio_Phase1_names_cleaned.shp'),
+            polyfield='OBJECTID',
+            s2path=paste0(dirpath,'Data/Sentinel2/CorsBodeilio/'),
+            s1path=paste0(dirpath,'Data/Sentinel1/CorsBodeilio/'),
+            outfolder=paste0(dirpath,'Statistics/CorsBodeilio_Phase1/'),
+            sitename='CorsBodeilio')
+            
+```
+
+### Calculate monthly and seasonal summary stats and change stats
+
+```{r run_summary_change_stats_corsbodeilio,eval=FALSE}
+change_stats(sitefile = paste0(dirpath,'Statistics/CorsBodeilio_Phase1/ZonalStats/CorsBodeilio_zonal_stats.txt'),
+             outfolder = paste0(dirpath,'Statistics/CorsBodeilio_Phase1/'),
+             polygons = paste0(dirpath,'Data/Habitat_maps/Wales/Phase_1_corrected_20200814/Cleaned/CorsBodeilio_Phase1_names_cleaned.shp'),
+             polyid = 'OBJECTID',
+             habclass = 'Name')
+```
+
+
+### Rhos Tonyrefail square site (10km^2^): 
+
+**S2 Granule:** T30UVC
+
+* Rhos Tonyrefail square (marshy and neutral grassland, possible small amount of peat)
+
+```{r Rhossite, include=FALSE, fig.width=8, fig.height=4}
+rhos_tonyrefail_site <- sf::st_read(path(site_folder_path, "Rhos_Tonyrefail_square.shp")) %>% 
+  janitor::clean_names() %>% 
+  dplyr::rename(name = site_name,
+         code = tile_name) %>% 
+  dplyr::select(name, code)
+rhos_tonyrefail_bounding_box <- create_square_bounding_box_polygon(rhos_tonyrefail_site)
+# sf::st_write(rhos_tonyrefail_bounding_box, 
+#        path(site_folder_path, "bounding_box", "rhos_tonyrefail_bounding_box.kml"))
+
+display_site(rhos_tonyrefail_site, rhos_tonyrefail_bounding_box)
+
+```
+
+### S1 and S2 Granules
+
+### Cleaning the Spatial framework
+
+The Rhos Tonyrefail Phase 1 shapefile was cleaned by removing polygons of <0.01 ha (100m2) and unwanted habitat covers. A total of 5 polygons were removed.   
+
+```{r clean_rhostonyrefail_Phase1_habitat_layer,eval=FALSE}
+rhos_raw<-sf::st_read("ST08_Phase1_names.shp")
+rhos_clean<-rhos_raw %>% dplyr::filter(!Name == "Mine") %>% dplyr::filter(AREA_HA>=0.01)
+sf::st_write(rhos_clean,"Cleaned/ST08_Phase1_names_cleaned2.shp")
+```
+
+### Running the zonal stats
+
+```{r run_zonalstats_rhostonyrefail,eval=FALSE}
+dirpath<-"ChangeDetection/"
+zonal_stats(polys=paste0(dirpath,'Data/Habitat_maps/Wales/Phase_1_corrected_20200814/Cleaned/ST08_Phase1_names_cleaned2.shp')
+            polyfield='OBJECTID',
+            s2path=paste0(dirpath,'Data/Sentinel2/RhosTonyrefail/'),
+            s1path=paste0(dirpath,'Data/Sentinel1/RhosTonyrefail/'),
+            outfolder=paste0(dirpath,'Statistics/RhosTonyrefail_Phase1/'),
+            sitename='RhosTonyrefail')
+```
+
+### Calculate monthly and seasonal summary and change stats
+```{r run_changestats_rhostonyrefail,eval=FALSE}
+change_stats(sitefile = paste0(dirpath,'Statistics/RhosTonyrefail_Phase1/ZonalStats/RhosTonyrefail_zonal_stats.txt'),
+             outfolder = paste0(dirpath,'Statistics/RhosTonyrefail_Phase1/'),
+             polygons = paste0(dirpath,'Data/Habitat_maps/Wales/Phase_1_corrected_20200814/Cleaned/ST08_Phase1_names_cleaned2.shp'),
+             polyid = 'OBJECTID',
+             habclass = 'Name')
+```

@@ -1,0 +1,661 @@
+---
+title: "CUU_ChangeDetection Scottish sites"
+author: "Becky Trippier"
+date: '23/07/2020'
+output:
+  html_document:
+  pdf_document: default
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#library(HabChangeDetection)
+library(sf)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(lubridate)
+library(tmap)
+library(janitor)
+library(fs)
+library(readxl)
+library(magrittr)
+
+#source('habitat_change_detection_functions.R')
+```
+
+```{r display_site,include=F,eval=F}
+display_site <- function(site_polygons, bounding_box) {
+  tmap::tmap_mode("view")
+  tmap::tm_shape(bounding_box) +
+    tmap::tm_fill(col = "grey", alpha = 0.5) +
+    tmap::tm_borders(col = "red", lwd = 2) +
+    tmap::tm_shape(site_polygons) +
+    tmap::tm_fill(col = "grey", alpha = 0.8) +
+    tmap::tm_borders(col = "black", lwd = 1) +
+    tmap::tm_basemap(leaflet::providers$OpenStreetMap) +
+    tmap::tm_scale_bar()
+}
+```
+
+```{r display_table, echo=FALSE,include=F}
+library(reactable)
+display_table <- function(data, rows = nrow(data)) {
+  reactable::reactable(data[1:rows, ], fullWidth = FALSE, searchable = TRUE, 
+            compact = TRUE, wrap = FALSE, resizable = TRUE,
+            defaultColDef = colDef(align = "left"),
+            showPageSizeOptions = TRUE, pageSizeOptions = c(10, nrow(data)),
+            class = "table")
+}
+```
+
+```{r get_granule_present_month,include=F}
+# at least one S2 granules present per month
+get_granule_present_month <- function(granules_dataset){
+  granules_dataset %>% 
+    dplyr::mutate(year = year(capture_date),
+                  month = month(capture_date)) %>% 
+    dplyr::group_by(year, month) %>% 
+    dplyr::tally() %>% 
+    dplyr::full_join(tidyr::crossing(year = seq(2015, 2020), month = seq(1, 12))) %>% 
+    dplyr::mutate(n = tidyr::replace_na(n, 0)) %>% 
+    dplyr::arrange(year, month) %>% 
+    dplyr::mutate(month = month.abb[month]) %>% 
+    tidyr::pivot_wider(names_from = month, values_from = n) %>% 
+    dplyr::mutate(across(.cols = Jan:Dec, .fns = function(x){if(x > 0){ x / x } else 0})) %>% 
+    janitor::adorn_totals(where = "col")
+}
+```
+
+```{r paths, include=F,eval=F}
+site_folder_path <- path("Sites/")
+granules_folder_path <- path("ChangeDetection/Data/Sentinel2/")
+```
+
+## Copernicus User Uptake - Change detection
+
+Scottish sites:
+
+* HES site 2 (10km^2^) 
+* Insh Marshes SSSI, Glenfeshie and HES site 3 (15km^2^): 
+* Flanders Moss SSSI and HES site 4 (10km^2^) 
+* Skyreburn Grasslands SSSI, Lagganmullan SSSI and HES site 1 (10km^2^) 
+
+Spatial frameworks:
+
+* EUNIS Landcover map 10m raster layer
+* 100m^2/1 hectare grid square EUNIS classification
+
+
+```{r allsites, include=FALSE,eval=F}
+scotland_sites <- sf::st_read(path(site_folder_path, "CUU_CD_Scottish_Sites.shp")) %>% 
+  janitor::clean_names() %>% 
+  dplyr::rename(code = id,
+         name = site_name) %>% 
+  dplyr::mutate(name = as.character(name)) %>% 
+  dplyr::select(name, code)
+```
+
+
+## Create spatial frameworks
+
+```{r spatframework,eval=F}
+library(raster)
+library(dplyr)
+library(APfun)
+library(rgdal)
+
+filepath <- 'filepath/'
+lookup <- read.csv('EUNIS_habitat_lookup.txt')
+
+sitetifs <- list.files(filepath, pattern='.tif', full.names=T)[c(1,4,7,10)]
+if(!dir.exists(paste0(filepath,'Framework2'))){
+  dir.create(paste0('Framework2'))
+}
+
+#iterate through 4 sites
+purrr::map(sitetifs,.f=function(tif){
+  gdalUtils::gdal_setInstallation()
+  #aggregate to 100m by modal group
+  gdalUtils::gdalwarp(srcfile = tif,
+                      dstfile = paste0(dirname(tif),'/Framework2/1ha_',basename(tif)), 
+                          s_srs = '+init=epsg:27700', t_srs = '+init=epsg:27700', r = 'mode', co = 'COMPRESS=LWZ', overwrite=T,
+                      tr = c(100,100))
+  # create a blank raster with individual cell ids
+  ha_rast <-  raster::raster(paste0(dirname(tif),'/Framework2/1ha_',basename(tif)))
+  blank_rast <- ha_rast
+  ha_df <- raster::as.data.frame(blank_rast) %>% dplyr::mutate(ID=dplyr::row_number())
+  blank_rast$vals <- ha_df$ID
+  raster::writeRaster(blank_rast$vals,paste0(dirname(tif),'/Framework2/1ha_blank_',basename(tif)),overwrite=T)
+  #create polygon grid shapefile
+  APfun::APpolygonize(paste0(dirname(tif),'/Framework2/1ha_blank_',basename(tif)),
+                      outFile=paste0(dirname(tif),'/Framework2/1ha_blank_',gsub(basename(tif),pattern='.tif',replacement='.shp')),
+                      OSGeoPath  = 'D:/Programs/QGIS',readToMemory = TRUE)
+  
+  #extract polygon value from raster
+  grid_poly <- sf::st_read(paste0(dirname(tif),'/Framework2/1ha_blank_',gsub(basename(tif),pattern='.tif',replacement='.shp')))
+  #extract all polygon values
+  poly_stat <- raster::extract(ha_rast,grid_poly,progress = "window",df=T)
+  
+ # Join back into polygons
+  names(poly_stat) <-c("ID","class")
+  poly_df <- grid_poly %>% 
+    dplyr::left_join(poly_stat,by=c('DN'='ID'))  %>%
+    dplyr::left_join(lookup[,c('RASTER_CODE','EUNIS_CODE','EUNIS_DESC')],by=c('class'='RASTER_CODE') ) %>% 
+    dplyr::select(-class)
+  
+  sf::st_write(poly_df,paste0(dirname(tif),'/Framework2/1ha_grid_EUNIS',gsub(basename(tif),pattern='.tif',replacement='.shp')),delete_layer = T)
+
+  
+})
+
+
+```
+
+## HES site 2 (10km^2^) 
+
+**S2 Granule:** T30VVK_ORB080, T30VVK_ORB123
+
+* HES site 2 (Peat and moorland; Aerial and ground surveys 2020)
+
+```{r HesSite2_BB, fig.width=8, fig.height=4,eval=F}
+hes_site_2 <- scotland_sites %>% dplyr::filter(code == 2)
+hes_site_bounding_box <- create_square_bounding_box_polygon(hes_site_2)
+# st_write(hes_site_bounding_box, 
+#           path(site_folder_path, "bounding_box", "hes_site_2_bounding_box.kml"))
+display_site(hes_site_2, hes_site_bounding_box)
+
+```
+
+### S1 and S2 Granules
+
+### Cleaning the Spatial frameworks
+
+```{r hessite2clean,eval=F}
+
+## Spatial framework 1 - 10m raster layer (Paula processed into shapefile)
+polys <- sf::st_read('1ha_grid_EUNISELCS_CUU_CD_Scottish_Sites_id_2.shp',quiet=T)
+
+#remove polygons under 100m
+polys_sf <- polys %>% dplyr::mutate(area = round(Shape_Area,digits=0)) %>% 
+  dplyr::filter(area >100)
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+#remove habitats we dont want to monitor
+levels(polys$EUNIS_DESC)
+
+habitat_remove <- c("B Roads, local streets and minor roads" ,
+                    "Buildings of cities, towns and villages / Low density buildings",
+                    "Private roads, publically accessible and restricted"  ,
+                    "Road networks" ,
+                    "Transport networks and other constructed hard-surfaced areas" )
+polys_sf <- polys_sf %>% dplyr::filter(!EUNIS_DESC %in% habitat_remove)
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+#write out clean version
+if(!dir.exists('Habitat_maps/Scotland/cleaned')}
+st_write(polys_sf, 'Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_2_clean.shp', delete_layer=T)
+
+##---------------##
+
+# Spatial framework 2 - 1ha grid
+
+polys2 <- st_read('1ha_grid_EUNISELCS_CUU_CD_Scottish_site_2.shp')
+
+#remove habitats we dont want to monitor or na
+unique(polys2$EUNIS_DESC)
+habitat_remove <- c("A Road" ,
+                    "B Roads, local streets and minor roads",
+                    "Buildings of cities, towns and villages / Low density buildings"  ,
+                    "Extractive industrial sites / Waste deposits",
+                    "Private roads, publically accessible and restricted",
+                    "Rail networks" ,
+                    "Road networks" ,
+                    "Transport networks and other constructed hard-surfaced areas"
+)
+polys_sf <- polys2 %>% dplyr::filter(!EUNIS_DESC %in% habitat_remove) %>%
+  dplyr::filter(!is.na(EUNIS_DESC)) 
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+st_write(polys_sf, 'Habitat_maps/Scotland/cleaned/1haGrid_ELCS_Scottish_site_2_clean.shp',delete_layer=T)
+
+```
+
+### Spatial Framework 1 - Running the zonal stats
+```{r, eval=F}
+dirpath <- 'Scotland/'
+## take the polygon shapefile
+zonal_stats(polys=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_2_clean.shp"),
+            polyfield='Id',
+            s2path=paste0(dirpath,"Data/Sentinel2/HES_site_2/"),
+            s1path=paste0(dirpath,'Data/Sentinel1/HES_site_2/'),
+            outfolder=paste0(dirpath,'Statistics/HES_site_2_EUNIS/'),
+            sitename="HES_Site2")
+
+```
+
+### Spatial Framework 1 - Calculate monthly and seasonal summaries and change stats
+```{r, eval=F}
+change_stats(sitefile=paste0(dirpath,'Statistics/HES_site_2_EUNIS/ZonalStats/HES_Site2_zonal_stats.txt'),
+             outfolder=paste0(dirpath,'Statistics/HES_site_2_EUNIS/'),
+             polygons=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_2_clean.shp"),
+             polyid='Id',habclass='EUNIS_DESC')
+
+```
+
+### Spatial Framework 2 - Running the zonal stats
+```{r eval=F}
+dirpath <- 'Scotland/'
+## take the polygon shapefile
+zonal_stats(polys=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/1haGrid_ELCS_Scottish_site_2_clean.shp"),
+            polyfield='DN',
+            s2path=paste0(dirpath,"Data/Sentinel2/HES_site_2/"),
+            s1path=paste0(dirpath,'Data/Sentinel1/HES_site_2/'),
+            outfolder=paste0(dirpath,'Statistics/HES_site_2_1haGrid/'),
+            sitename="HES_Site2")
+
+```
+
+### Spatial Framework 2 - Calculate monthly and seasonal summaries and change stats
+```{r, eval=F}
+change_stats(sitefile=paste0(dirpath,'Statistics/HES_site_2_1haGrid/ZonalStats/HES_Site2_zonal_stats.txt'),
+             outfolder=paste0(dirpath,'Statistics/HES_site_2_1haGrid/'),
+             polygons=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/1haGrid_ELCS_Scottish_site_2_clean.shp"),
+             polyid='DN',habclass='EUNIS_DESC')
+
+```
+
+### creating S1 thumbnails - only needed once per site (now incorporated into zonal_stats function)
+
+```{r,eval=F}
+s1thumbs(s1path=paste0(dirpath,'Data/Sentinel1/HES_site_2/'),
+         out_folder=paste0(dirpath,'Statistics/HES_site_2_EUNIS/ZonalStats/s1/thumbs/'))
+   
+```
+
+## Insh Marshes SSSI, Glenfeshie and HES site 3 (15km^2^): 
+
+**S2 Granule:** T30VVJ_ORB080, T30VVJ_ORB123
+
+* Insh Marshes SSSI (Floodplain wetlands, managed by pony grazing, renaturalising flood managment)
+* Glenfeshie (Cairngorms SSSI) (woodland recovering from overgrazing)
+* HES site 3
+
+```{r inshsite,  fig.width=8, fig.height=4,eval=F}
+insh_glenfeshie_hes3_site <- scotland_sites %>% filter(code == 1)
+
+insh_glenfeshie_hes3_bounding_box <- create_square_bounding_box_polygon(insh_glenfeshie_hes3_site)
+# sf::st_write(insh_glenfeshie_hes3_bounding_box, 
+#           path(site_folder_path, "bounding_box", "insh_glenfeshie_hes3_bounding_box.kml"))
+
+display_site(insh_glenfeshie_hes3_site, insh_glenfeshie_hes3_bounding_box)
+
+```
+
+### S1 and S2 Granules
+
+### Cleaning the Spatial framework
+
+```{r inshclean,eval=F}
+
+polys <- sf::st_read('1ha_grid_EUNISELCS_CUU_CD_Scottish_Sites_id_1.shp',quiet=T)
+
+#remove polygons under 100m
+polys_sf <- polys %>% dplyr::mutate(area = round(Shape_Area,digits=0)) %>% 
+  dplyr::filter(area >100)
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+#remove habitats we dont want to monitor
+levels(polys$EUNIS_DESC)
+
+habitat_remove <- c("A Road" ,
+                    "B Roads, local streets and minor roads",
+                    "Buildings of cities, towns and villages / Low density buildings"  ,
+                    "Extractive industrial sites / Waste deposits",
+                    "Private roads, publically accessible and restricted",
+                    "Rail networks" ,
+                     "Road networks" ,
+                    "Transport networks and other constructed hard-surfaced areas"
+                    )
+polys_sf <- polys_sf %>% dplyr::filter(!EUNIS_DESC %in% habitat_remove)
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+#write out clean version
+sf::st_write(polys_sf, 'ELCS_Scottish_site_1_clean.shp',delete_layer=T)
+
+##---------------##
+
+# Spatial framework 2 - 1ha grid
+
+polys2 <- sf::st_read('1ha_grid_EUNISELCS_CUU_CD_Scottish_Sites_id_1.shp')
+
+#remove habitats we dont want to monitor or na
+unique(polys2$EUNIS_DESC)
+
+habitat_remove <- c("A Road" ,
+                    "B Roads, local streets and minor roads",
+                    "Buildings of cities, towns and villages / Low density buildings"  ,
+                    "Extractive industrial sites / Waste deposits",
+                    "Private roads, publically accessible and restricted",
+                    "Rail networks" ,
+                     "Road networks" ,
+                    "Transport networks and other constructed hard-surfaced areas"
+                    )
+polys_sf <- polys2 %>% dplyr::filter(!EUNIS_DESC %in% habitat_remove) %>%
+  dplyr::filter(!is.na(EUNIS_DESC)) 
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+sf::st_write(polys_sf, '1haGrid_ELCS_Scottish_site_1_clean.shp',delete_layer=T)
+
+```
+
+### Spatial Framework 1 - Running the zonal stats
+
+```{r, eval=F}
+dirpath <- 'Scotland/'
+## take the polygon shapefile
+zonal_stats(polys=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_1_clean.shp"),
+            polyfield='Id',
+            s2path=paste0(dirpath,"Data/Sentinel2/InshMarshes/"),
+            s1path=paste0(dirpath,'Data/Sentinel1/InshMarshes/'),
+            outfolder=paste0(dirpath,'Statistics/InshMarshes_EUNIS/'),
+            sitename="InshMarshes")
+```
+
+
+### Spatial Framework 1 -  Calculate monthly and seasonal summaries and change stats
+```{r, eval=F}
+change_stats(sitefile=paste0(dirpath,'Statistics/InshMarshes_EUNIS/ZonalStats/InshMarshes_zonal_stats.txt'),
+             outfolder=paste0(dirpath,'Statistics/InshMarshes_EUNIS/'),
+             polygons=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_1_clean.shp"),
+             polyid='Id',habclass='EUNIS_DESC')
+
+```
+
+
+### Spatial Framework 2 - Running the zonal stats
+
+```{r, eval=F}
+## take the polygon shapefile
+zonal_stats(polys=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/1haGrid_ELCS_Scottish_site_1_clean.shp"),
+            polyfield='DN',
+            s2path=paste0(dirpath,"Data/Sentinel2/InshMarshes/"),
+            s1path=paste0(dirpath,'Data/Sentinel1/InshMarshes/'),
+            outfolder=paste0(dirpath,'Statistics/InshMarshes_1haGrid/'),
+            sitename="InshMarshes")
+```
+
+
+### Spatial Framework 2 -  Calculate monthly and seasonal summaries and change stats
+```{r, eval=F}
+change_stats(sitefile=paste0(dirpath,'Statistics/InshMarshes_1haGrid/ZonalStats/InshMarshes_zonal_stats.txt'),
+             outfolder=paste0(dirpath,'Statistics/InshMarshes_1haGrid/'),
+             polygons=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/1haGrid_ELCS_Scottish_site_1_clean.shp"),
+             polyid='DN',habclass='EUNIS_DESC')
+
+```
+
+### creating S1 thumbnails - only needed once per site  (now incorporated into zonal_stats function)
+
+```{r,eval=F}
+s1thumbs(s1path=paste0(dirpath,'Data/Sentinel1/InshMarshes/'),
+         out_folder=paste0(dirpath,'Statistics/InshMarshes_EUNIS/ZonalStats/s1/thumbs/'))
+
+   
+```
+
+## Flanders Moss SSSI and HES site 4 (10km^2^) 
+
+**S2 Granule:** T30VVH_ORB080, T30VVH_ORB123
+
+* Flanders Moss SSSI (Raised bog and bog woodland features, in unfavourable but recovering condition, managed by controlling scrub and maintaining water table)
+* HES site 4 (Arable, recreation and woodland)
+
+```{r flanderssite,fig.width=8, fig.height=4,eval=F}
+flanders_moss_hes4_site <- scotland_sites %>% filter(code == 3) 
+
+flanders_moss_hes4_bounding_box <- create_square_bounding_box_polygon(flanders_moss_hes4_site)
+# sf::st_write(flanders_moss_hes4_bounding_box, 
+#         path(site_folder_path, "bounding_box", "flanders_moss_hes4_bounding_box.kml"))
+display_site(flanders_moss_hes4_site, flanders_moss_hes4_bounding_box )
+
+```
+
+### S1 and S2 Granules
+
+### Cleaning the Spatial framework
+
+```{r flandersclean,eval=F}
+
+polys <- sf::st_read('ELCS_Scottish_site_3.shp',quiet=T)
+
+#remove polygons under 100m
+polys_sf <- polys %>% dplyr::mutate(area = round(Shape_Area,digits=0)) %>% 
+  dplyr::filter(area >100)
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+#remove habitats we dont want to monitor
+levels(polys$EUNIS_DESC)
+
+habitat_remove <- c("A Road" ,
+                    "B Roads, local streets and minor roads",
+                    "Buildings of cities, towns and villages / Low density buildings"  ,
+                    "Private roads, publically accessible and restricted",
+                    "Road networks" ,
+                    "Transport networks and other constructed hard-surfaced areas"
+                    )
+polys_sf <- polys_sf %>% dplyr::filter(!EUNIS_DESC %in% habitat_remove)
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+#write out clean version
+sf::st_write(polys_sf, 'Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_3_clean.shp',delete_layer=T)
+##---------------##
+
+# Spatial framework 2 - 1ha grid
+
+polys2 <- sf::st_read('1ha_grid_EUNISELCS_Scottish_site_3.shp')
+#remove habitats we dont want to monitor or na
+unique(polys2$EUNIS_DESC)
+
+habitat_remove <- c("A Road" ,
+                    "B Roads, local streets and minor roads",
+                    "Buildings of cities, towns and villages / Low density buildings"  ,
+                    "Private roads, publically accessible and restricted",
+                    "Road networks" ,
+                    "Transport networks and other constructed hard-surfaced areas"
+                    )
+polys_sf <- polys2 %>% dplyr::filter(!EUNIS_DESC %in% habitat_remove) %>%
+  dplyr::filter(!is.na(EUNIS_DESC)) 
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+sf::st_write(polys_sf, 'Habitat_maps/Scotland/cleaned/1haGrid_ELCS_Scottish_site_3_clean.shp',delete_layer=T)
+
+```
+
+### Spatial Framework 1 - Running the zonal stats
+
+```{r, eval=F}
+dirpath <- 'Scotland/'
+## take the polygon shapefile
+zonal_stats(polys=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_3_clean.shp"),
+            polyfield='Id',
+            s2path=paste0(dirpath,"Data/Sentinel2/FlandersMoss/"),
+            s1path=paste0(dirpath,'Data/Sentinel1/FlandersMoss/'),
+            outfolder=paste0(dirpath,'Statistics/FlandersMoss_EUNIS/'),
+            sitename="FlandersMoss")
+```
+
+
+### Spatial Framework 1 -  Calculate monthly and seasonal summaries and change stats
+```{r, eval=F}
+change_stats(sitefile=paste0(dirpath,'Statistics/FlandersMoss_EUNIS/ZonalStats/FlandersMoss_zonal_stats.txt'),
+             outfolder=paste0(dirpath,'Statistics/FlandersMoss_EUNIS/'),
+             polygons=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_3_clean.shp"),
+             polyid='Id',habclass='EUNIS_DESC')
+
+```
+
+
+### Spatial Framework 2 - Running the zonal stats
+
+```{r, eval=F}
+## take the polygon shapefile
+zonal_stats(polys=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/1haGrid_ELCS_Scottish_site_3_clean.shp"),
+            polyfield='DN',
+            s2path=paste0(dirpath,"Data/Sentinel2/FlandersMoss/"),
+            s1path=paste0(dirpath,'Data/Sentinel1/FlandersMoss/'),
+            outfolder=paste0(dirpath,'Statistics/FlandersMoss_1haGrid/'),
+            sitename="FlandersMoss")
+```
+
+
+### Spatial Framework 2 -  Calculate monthly and seasonal summaries and change stats
+```{r, eval=F}
+change_stats(sitefile=paste0(dirpath,'Statistics/FlandersMoss_1haGrid/ZonalStats/FlandersMoss_zonal_stats.txt'),
+             outfolder=paste0(dirpath,'Statistics/FlandersMoss_1haGrid/'),
+             polygons=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/1haGrid_ELCS_Scottish_site_3_clean.shp"),
+             polyid='DN',habclass='EUNIS_DESC')
+
+```
+
+
+### creating S1 thumbnails - only needed once per site  (now incorporated into zonal_stats function)
+
+```{r,eval=F}
+s1thumbs(s1path=paste0(dirpath,'Data/Sentinel1/FlandersMoss/'),
+         out_folder=paste0(dirpath,'Statistics/FlandersMoss_EUNIS/ZonalStats/s1/thumbs/'))
+
+   
+```
+
+## Skyreburn Grasslands SSSI, Lagganmullan SSSI and HES site 1 (10km^2^) 
+
+**S2 Granule:** T30UVF_ORB080, T30UVF_ORB123
+
+* Skyreburn Grasslands, SSSI (lowland neutral grassland and fen meadow, grazing regime)
+* Lagganmullan, SSSI (fen meadow without active management; NVC survey 2019.)
+* HES site 1 
+
+```{r skyre,  fig.width=8, fig.height=4,eval=F}
+skyre_laggan_hes1_site <- scotland_sites %>% filter(code == 4)
+skyre_laggan_hes1_bounding_box <- create_square_bounding_box_polygon(skyre_laggan_hes1_site)
+# sf::st_write(skyre_laggan_hes1_bounding_box, 
+#         path(site_folder_path, "bounding_box", "skyre_laggan_hes1_bounding_box.kml"))
+display_site(skyre_laggan_hes1_site, skyre_laggan_hes1_bounding_box)
+
+```
+
+
+### S1 and S2 Granules
+
+### Cleaning the Spatial framework
+
+```{r skyreclean,eval=F}
+
+polys <- sf::st_read('ELCS_Scottish_site_4.shp',quiet=T)
+
+#remove polygons under 100m
+polys_sf <- polys %>% dplyr::mutate(area = round(Shape_Area,digits=0)) %>% 
+  dplyr::filter(area >100)
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+#remove habitats we dont want to monitor
+levels(polys$EUNIS_DESC)
+
+habitat_remove <- c("A Road" ,
+                    "B Roads, local streets and minor roads",
+                    "Buildings of cities, towns and villages / Low density buildings"  ,
+                    "Coastal dunes and sandy shores",
+                    "Coastal saltmarshes and saline reedbeds" ,
+                     "Coastal shingle" ,
+                    "Littoral rock and other hard substrata" ,
+                    "Littoral sediments"  ,
+                    "Marine habitats" ,
+                    "Private roads, publically accessible and restricted",
+                    "Road networks" ,
+                     "Transport networks and other constructed hard-surfaced areas" 
+                    )
+polys_sf <- polys_sf %>% dplyr::filter(!EUNIS_DESC %in% habitat_remove)
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+#write out clean version
+sf::st_write(polys_sf, 'Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_4_clean.shp',delete_layer=T)
+##---------------##
+
+# Spatial framework 2 - 1ha grid
+
+polys2 <- sf::st_read('Habitat_maps/Scotland/Framework2/1ha_grid_EUNISELCS_Scottish_site_4.shp')
+#remove habitats we dont want to monitor or na
+unique(polys2$EUNIS_DESC)
+
+habitat_remove <- c("A Road" ,
+                    "B Roads, local streets and minor roads",
+                    "Buildings of cities, towns and villages / Low density buildings"  ,
+                    "Private roads, publically accessible and restricted",
+                    "Road networks" ,
+                    "Transport networks and other constructed hard-surfaced areas"
+)
+polys_sf <- polys2 %>% dplyr::filter(!EUNIS_DESC %in% habitat_remove) %>%
+  dplyr::filter(!is.na(EUNIS_DESC))
+print(paste0("Polygons remaining: ", nrow(polys_sf)))
+
+sf::st_write(polys_sf, 'Habitat_maps/Scotland/cleaned/1haGrid_ELCS_Scottish_site_4_clean.shp',delete_layer=T)
+
+```
+
+### Spatial Framework 1 - Running the zonal stats
+
+```{r, eval=F}
+## take the polygon shapefile
+zonal_stats(polys=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_4_clean.shp"),
+            polyfield='Id',
+            s2path=paste0(dirpath,"Data/Sentinel2/Skyreburn/"),
+            s1path=paste0(dirpath,'Data/Sentinel1/Skyreburn/'),
+            outfolder=paste0(dirpath,'Statistics/Skyreburn_EUNIS/'),
+            sitename="Skyreburn")
+```
+
+
+### Spatial Framework 1 -  Calculate monthly and seasonal summaries and change stats
+```{r, eval=F}
+change_stats(sitefile=paste0(dirpath,'Statistics/Skyreburn_EUNIS/ZonalStats/Skyreburn_zonal_stats.txt'),
+             outfolder=paste0(dirpath,'Statistics/Skyreburn_EUNIS/'),
+             polygons=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/ELCS_Scottish_site_4_clean.shp"),
+             polyid='Id',habclass='EUNIS_DESC')
+
+```
+
+
+### Spatial Framework 2 - Running the zonal stats
+
+```{r, eval=F}
+## take the polygon shapefile
+zonal_stats(polys=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/1haGrid_ELCS_Scottish_site_4_clean.shp"),
+            polyfield='DN',
+            s2path=paste0(dirpath,"Data/Sentinel2/Skyreburn/"),
+            s1path=paste0(dirpath,'Data/Sentinel1/Skyreburn/'),
+            outfolder=paste0(dirpath,'Statistics/Skyreburn_1haGrid/'),
+            sitename="Skyreburn")
+```
+
+
+### Spatial Framework 2 -  Calculate monthly and seasonal summaries and change stats
+```{r, eval=F}
+change_stats(sitefile=paste0(dirpath,'Statistics/Skyreburn_1haGrid/ZonalStats/Skyreburn_zonal_stats.txt'),
+             outfolder=paste0(dirpath,'Statistics/Skyreburn_1haGrid/'),
+             polygons=paste0(dirpath,"Data/Habitat_maps/Scotland/cleaned/1haGrid_ELCS_Scottish_site_4_clean.shp"),
+             polyid='DN',habclass='EUNIS_DESC')
+
+```
+
+
+### creating S1 thumbnails - only needed once per site  (now incorporated into zonal_stats function)
+
+```{r,eval=F}
+s1thumbs(s1path=paste0(dirpath,'Data/Sentinel1/Skyreburn/'),
+         out_folder=paste0(dirpath,'Statistics/Skyreburn_EUNIS/ZonalStats/s1/thumbs/'))
+
+   
+```

@@ -1,0 +1,376 @@
+---
+title: "CUU Habitat Change - Analysis of change flag"
+author: "Becky Trippier"
+date: "12/08/2020"
+output:
+  html_document:
+    df_print: paged
+    css: style.css
+    includes:
+      before_body: header.html
+  pdf_document: default
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+  library(sf)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(plotly)
+library(DT)
+```
+
+## Example site - Insh Marshes
+
+```{r, include=F,eval=F}
+#load in the data and flag change
+#plot differences
+dirpath <- 'Scotland/'
+hab_stat <- read.csv(paste0(dirpath,"Statistics/InshMarshes_EUNIS/Seasonal_statistics/InshMarshes_NDVI_seasonal_changestats.txt"))
+poly_stat <- read.csv(paste0(dirpath,"Statistics/InshMarshes_EUNIS/Seasonal_statistics/InshMarshes_NDVI_seasonal_stats.txt"))
+polygons <- sf::st_read(paste0(dirpath,"Data/Habitat_maps/Scotland/ELCS_Scottish_site_1.shp")) %>% sf::st_drop_geometry()
+
+#join the data
+poly_hab <- poly_stat %>% dplyr::left_join(polygons[,c('Id','EUNIS_DESC')], by=c('ID'='Id')) 
+hab_stat <- hab_stat %>% dplyr::select(-X) %>% dplyr::rename(EUNIS_DESC = 'get.habclass.')
+poly_all <- poly_hab %>% dplyr::left_join(hab_stat,by=c('seasonyear','EUNIS_DESC')) 
+
+#order factor levels - again
+##get unique years
+all_lev <- stringr::str_split(levels(poly_all$seasonyear),"_",simplify=T) %>% data.frame()  %>% dplyr::mutate_if(is.character,as.factor)
+
+#order by season and year
+all_lev$X1 <- factor(all_lev$X1, levels = c('Spring','Summer','Autumn','Winter'),ordered=T)
+lev_sort <- all_lev %>% arrange(X1) %>% dplyr::arrange(X2) %>% tidyr::unite(yearseason, sep="_")
+##sort levels in data
+poly_all$seasonyear <- factor(poly_all$seasonyear, levels = lev_sort$yearseason)
+
+# flag those above or below 2SD as change
+
+##above 2 SD
+polygon_change <- poly_all %>% dplyr::mutate(hab_mean_poschange = hab_mean+(2*hab_meansd),
+                                      hab_mean_negchange = hab_mean-(2*hab_meansd),
+                                      hab_median_poschange = hab_median+(2*hab_mediansd),
+                                      hab_median_negchange = hab_median-(2*hab_mediansd),
+                                      hab_min_poschange = hab_min+(2*hab_minsd),
+                                      hab_min_negchange = hab_min-(2*hab_minsd),
+                                      hab_max_poschange = hab_max+(2*hab_maxsd),
+                                      hab_max_negchange = hab_max-(2*hab_maxsd),
+                                      hab_Q1_poschange = hab_Q1+(2*hab_Q1sd),
+                                      hab_Q1_negchange = hab_Q1-(2*hab_Q1sd),
+                                      hab_Q3_poschange = hab_Q1+(2*hab_Q3sd),
+                                      hab_Q3_negchange = hab_Q1-(2*hab_Q3sd)) %>% 
+  dplyr::mutate(meanchange = ifelse(mean <hab_mean_negchange,1,0 ), 
+         medianchange = ifelse(median <hab_median_negchange,1,0 ),
+         minchange = ifelse(min <hab_min_negchange,1,0 ),
+         maxchange = ifelse(max <hab_max_negchange,1,0 ),
+         Q1change = ifelse(Q1 <hab_Q1_negchange,1,0 ),
+         Q3change = ifelse(Q3 <hab_Q3_negchange,1,0 ))
+
+
+
+```
+
+## Numbers of polygons flagged as change
+
+### When change is calculated by 1 standard deviations from the mean for the habitat type:
+
+```{r, echo=F,eval=F}
+##above 3 SD
+polygon_change_1SD <- poly_all %>% dplyr:: mutate(hab_mean_poschange = hab_mean+hab_meansd,
+                                      hab_mean_negchange = hab_mean-hab_meansd,
+                                      hab_median_poschange = hab_median+hab_mediansd,
+                                      hab_median_negchange = hab_median-hab_mediansd,
+                                      hab_min_poschange = hab_min+hab_minsd,
+                                      hab_min_negchange = hab_min-hab_minsd,
+                                      hab_max_poschange = hab_max+hab_maxsd,
+                                      hab_max_negchange = hab_max-hab_maxsd,
+                                      hab_Q1_poschange = hab_Q1+hab_Q1sd,
+                                      hab_Q1_negchange = hab_Q1-hab_Q1sd,
+                                      hab_Q3_poschange = hab_Q1+hab_Q3sd,
+                                      hab_Q3_negchange = hab_Q1-hab_Q3sd) %>% 
+   dplyr::mutate(meanchange = ifelse(mean <hab_mean_negchange,1,0 ), 
+         medianchange = ifelse(median <hab_median_negchange,1,0 ),
+         minchange = ifelse(min <hab_min_negchange,1,0 ),
+         maxchange = ifelse(max <hab_max_negchange,1,0 ),
+         Q1change = ifelse(Q1 <hab_Q1_negchange,1,0 ),
+         Q3change = ifelse(Q3 <hab_Q3_negchange,1,0 ))
+#flagged summary
+flagged_1SD <- polygon_change_1SD %>% dplyr::group_by(index, seasonyear, EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n(), meanchange=sum(meanchange),medianchange=sum(medianchange),Q1change=sum(Q1change),Q3change=sum(Q3change))
+datatable(flagged_1SD)
+```
+
+### When change is calculated by 2 standard deviations from the mean for the habitat type:
+
+```{r, echo=F,eval=F}
+flagged <- polygon_change %>% dplyr::group_by(index, seasonyear, EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n(),meanchange=sum(meanchange),medianchange=sum(medianchange),Q1change=sum(Q1change),Q3change=sum(Q3change))
+datatable(flagged)
+```
+
+### When change is calculated by 3 standard deviations from the mean for the habitat type:
+
+```{r, echo=F,eval=F}
+##above 3 SD
+polygon_change_3SD <- poly_all %>% dplyr::mutate(hab_mean_poschange = hab_mean+(3*hab_meansd),
+                                      hab_mean_negchange = hab_mean-(3*hab_meansd),
+                                      hab_median_poschange = hab_median+(3*hab_mediansd),
+                                      hab_median_negchange = hab_median-(3*hab_mediansd),
+                                      hab_min_poschange = hab_min+(3*hab_minsd),
+                                      hab_min_negchange = hab_min-(3*hab_minsd),
+                                      hab_max_poschange = hab_max+(3*hab_maxsd),
+                                      hab_max_negchange = hab_max-(3*hab_maxsd),
+                                      hab_Q1_poschange = hab_Q1+(3*hab_Q1sd),
+                                      hab_Q1_negchange = hab_Q1-(3*hab_Q1sd),
+                                      hab_Q3_poschange = hab_Q1+(3*hab_Q3sd),
+                                      hab_Q3_negchange = hab_Q1-(3*hab_Q3sd)) %>% 
+  dplyr::mutate(meanchange = ifelse(mean <hab_mean_negchange,1,0 ), 
+         medianchange = ifelse(median <hab_median_negchange,1,0 ),
+         minchange = ifelse(min <hab_min_negchange,1,0 ),
+         maxchange = ifelse(max <hab_max_negchange,1,0 ),
+         Q1change = ifelse(Q1 <hab_Q1_negchange,1,0 ),
+         Q3change = ifelse(Q3 <hab_Q3_negchange,1,0 ))
+#flagged summary
+flagged_3SD <- polygon_change_3SD %>% dplyr::group_by(index, seasonyear, EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n(),meanchange=sum(meanchange),medianchange=sum(medianchange),Q1change=sum(Q1change),Q3change=sum(Q3change))
+datatable(flagged_3SD)
+```
+
+
+## Average habitat statistics per month per season
+
+
+```{r, echo=F,eval=F}
+hab_stat <- polygon_change %>%  
+  dplyr::select(index, seasonyear, EUNIS_DESC, hab_mean, hab_meansd,hab_median,hab_mediansd,hab_Q1,hab_Q1sd,hab_Q3,hab_Q3sd) %>% 
+  unique()
+
+#get total polygons per habitat
+ totalhab <- polygon_change %>% 
+   dplyr::select(ID,seasonyear, EUNIS_DESC) %>% 
+   dplyr::group_by(seasonyear,EUNIS_DESC) %>% dplyr::summarise(totalpolygons=n()) %>% 
+   dplyr::left_join(hab_stat,by=c('seasonyear','EUNIS_DESC'))
+
+
+datatable(totalhab)
+
+```
+
+
+
+
+## Exploring polygon changes
+
+The plots below show seasonal polygon statistics compared to the mean seasonal habitat statistics, with ranges within 1SD (in grey) and 2SD (in red). Those listed below which are flagged as "change" are where a value for the season has fallen below the lower habitat range.
+
+### Polygon id: 531
+
+```{r, echo=F}
+#---------------------#
+#filter to selected polygon and stat
+poly_id = 531
+stat <-'mean'
+#---------------------#
+
+polygondat <- polygon_change %>% dplyr::filter(ID==poly_id)  %>% dplyr::arrange(seasonyear)
+
+p <- ggplot2::ggplot(polygondat)+
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::theme_classic()+
+  ggplot2::labs(y = paste0(stat,"NDVI")) +
+  ggplot2::theme(axis.title.x = ggplot2::element_blank(),axis.text.x=ggplot2::element_text(angle=90))
+
+#separate as geom_ribbon takes continuous data
+p2 <- p + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-(2*get(paste0('hab_',stat,'sd'))), ymax=get(paste0('hab_',stat))+(2*get(paste0('hab_',stat,'sd')))), fill="red",alpha=0.1) + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-get(paste0('hab_',stat,'sd')), ymax=get(paste0('hab_',stat))+get(paste0('hab_',stat,'sd'))), fill="grey70",alpha=0.5)
+
+plotly::ggplotly(p2) 
+
+```
+
+
+```{r, echo=F}
+# polygons flagged as change
+polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
+
+```
+
+### Polygon id: 14993
+
+```{r, echo=F}
+#---------------------#
+#filter to selected polygon and stat
+poly_id = 14993
+stat <-'mean'
+#---------------------#
+
+polygondat <- polygon_change %>% dplyr::filter(ID==poly_id)  %>% dplyr::arrange(seasonyear)
+
+p <- ggplot2::ggplot(polygondat)+
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::theme_classic()+
+  ggplot2::labs(y = paste0(stat,"NDVI")) +
+  ggplot2::theme(axis.title.x = ggplot2::element_blank(),axis.text.x=ggplot2::element_text(angle=90))
+
+#separate as geom_ribbon takes continuous data
+p2 <- p + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-(2*get(paste0('hab_',stat,'sd'))), ymax=get(paste0('hab_',stat))+(2*get(paste0('hab_',stat,'sd')))), fill="red",alpha=0.1) + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-get(paste0('hab_',stat,'sd')), ymax=get(paste0('hab_',stat))+get(paste0('hab_',stat,'sd'))), fill="grey70",alpha=0.5)
+
+plotly::ggplotly(p2) 
+
+```
+
+
+```{r, echo=F}
+# polygons flagged as change
+polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
+```
+
+
+### Polygon id: 6907
+
+```{r, echo=F}
+#---------------------#
+#filter to selected polygon and stat
+poly_id = 6907
+stat <-'mean'
+#---------------------#
+
+polygondat <- polygon_change %>% dplyr::filter(ID==poly_id)  %>% dplyr::arrange(seasonyear)
+
+p <- ggplot2::ggplot(polygondat)+
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::theme_classic()+
+  ggplot2::labs(y = paste0(stat,"NDVI")) +
+  ggplot2::theme(axis.title.x = ggplot2::element_blank(),axis.text.x=ggplot2::element_text(angle=90))
+
+#separate as geom_ribbon takes continuous data
+p2 <- p + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-(2*get(paste0('hab_',stat,'sd'))), ymax=get(paste0('hab_',stat))+(2*get(paste0('hab_',stat,'sd')))), fill="red",alpha=0.1) + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-get(paste0('hab_',stat,'sd')), ymax=get(paste0('hab_',stat))+get(paste0('hab_',stat,'sd'))), fill="grey70",alpha=0.5)
+
+plotly::ggplotly(p2) 
+
+```
+
+
+```{r, echo=F}
+# polygons flagged as change
+polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
+```
+
+### Polygon id: 14519
+
+```{r, echo=F}
+#---------------------#
+#filter to selected polygon and stat
+poly_id = 14519
+stat <-'mean'
+#---------------------#
+
+polygondat <- polygon_change %>% dplyr::filter(ID==poly_id)  %>% dplyr::arrange(seasonyear)
+
+p <- ggplot2::ggplot(polygondat)+
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::theme_classic()+
+  ggplot2::labs(y = paste0(stat,"NDVI")) +
+  ggplot2::theme(axis.title.x = ggplot2::element_blank(),axis.text.x=ggplot2::element_text(angle=90))
+
+#separate as geom_ribbon takes continuous data
+p2 <- p + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-(2*get(paste0('hab_',stat,'sd'))), ymax=get(paste0('hab_',stat))+(2*get(paste0('hab_',stat,'sd')))), fill="red",alpha=0.1) + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-get(paste0('hab_',stat,'sd')), ymax=get(paste0('hab_',stat))+get(paste0('hab_',stat,'sd'))), fill="grey70",alpha=0.5)
+
+plotly::ggplotly(p2) 
+
+```
+
+
+```{r, echo=F}
+# polygons flagged as change
+polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
+```
+
+### Polygon id: 3344
+
+```{r,echo=F}
+#---------------------#
+#filter to selected polygon and stat
+poly_id = 3344
+stat <-'mean'
+#---------------------#
+
+polygondat <- polygon_change %>% dplyr::filter(ID==poly_id)  %>% dplyr::arrange(seasonyear)
+
+p <- ggplot2::ggplot(polygondat)+
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::theme_classic()+
+  ggplot2::labs(y = paste0(stat,"NDVI")) +
+  ggplot2::theme(axis.title.x = ggplot2::element_blank(),axis.text.x=ggplot2::element_text(angle=90))
+
+#separate as geom_ribbon takes continuous data
+p2 <- p + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-(2*get(paste0('hab_',stat,'sd'))), ymax=get(paste0('hab_',stat))+(2*get(paste0('hab_',stat,'sd')))), fill="red",alpha=0.1) + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-get(paste0('hab_',stat,'sd')), ymax=get(paste0('hab_',stat))+get(paste0('hab_',stat,'sd'))), fill="grey70",alpha=0.5)
+
+plotly::ggplotly(p2) 
+
+```
+
+
+```{r, echo=F}
+# polygons flagged as change
+polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
+```
+
+### Polygon id: 3862
+
+```{r, echo=F}
+#---------------------#
+#filter to selected polygon and stat
+poly_id = 3862
+stat <-'mean'
+#---------------------#
+
+polygondat <- polygon_change %>% dplyr::filter(ID==poly_id)  %>% dplyr::arrange(seasonyear)
+
+p <- ggplot2::ggplot(polygondat)+
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(stat), group=EUNIS_DESC), colour = "#1E1E1E") +
+  ggplot2::geom_point(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::geom_line(ggplot2::aes(x = seasonyear, y = get(paste0('hab_',stat)), group=EUNIS_DESC), colour = "#3F9C35") +
+  ggplot2::theme_classic()+
+  ggplot2::labs(y = paste0(stat,"NDVI")) +
+  ggplot2::theme(axis.title.x = ggplot2::element_blank(),axis.text.x=ggplot2::element_text(angle=90))
+
+#separate as geom_ribbon takes continuous data
+p2 <- p + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-(2*get(paste0('hab_',stat,'sd'))), ymax=get(paste0('hab_',stat))+(2*get(paste0('hab_',stat,'sd')))), fill="red",alpha=0.1) + 
+  ggplot2::geom_ribbon(aes(x = 1:length(seasonyear), ymin = get(paste0('hab_',stat))-get(paste0('hab_',stat,'sd')), ymax=get(paste0('hab_',stat))+get(paste0('hab_',stat,'sd'))), fill="grey70",alpha=0.5)
+
+plotly::ggplotly(p2) 
+
+```
+
+
+```{r, echo=F}
+# polygons flagged as change
+polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
+```
