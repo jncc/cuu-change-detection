@@ -1,6 +1,5 @@
 ---
 title: "CUU Habitat Change - Analysis of statistics for flagging change"
-author: "Becky Trippier"
 date: "08/09/2020"
 output:
   html_document:
@@ -29,7 +28,7 @@ library(plotly)
 
 ## Example site - Insh Marshes
 
-This report is to explore the statistics generated from the Sentinel-1 and Sentinel-2 data for the Insh Marshes and the different ways in which we can flag change.
+This report is to explore the statistics generated from theSentinel-2 data for the Insh Marshes and the different ways in which we can flag change.
 
 ```{r, include=F}
 #load in the data and flag change

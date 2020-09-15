@@ -1,6 +1,5 @@
 ---
 title: "CUU_ChangeDetection English sites"
-author: "Graham French"
 date: '`r Sys.Date()`'
 output: html_document
 always_allow_html: yes

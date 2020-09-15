@@ -1,6 +1,5 @@
 ---
 title: "CUU Habitat Change - Analysis of change flag"
-author: "Becky Trippier"
 date: "12/08/2020"
 output:
   html_document:
@@ -165,7 +164,7 @@ The plots below show seasonal polygon statistics compared to the mean seasonal h
 
 ### Polygon id: 531
 
-```{r, echo=F}
+```{r, echo=F,eval=F}
 #---------------------#
 #filter to selected polygon and stat
 poly_id = 531
@@ -193,7 +192,7 @@ plotly::ggplotly(p2)
 ```
 
 
-```{r, echo=F}
+```{r, echo=F,eval=F}
 # polygons flagged as change
 polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
 
@@ -201,7 +200,7 @@ polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID
 
 ### Polygon id: 14993
 
-```{r, echo=F}
+```{r, echo=F,eval=F}
 #---------------------#
 #filter to selected polygon and stat
 poly_id = 14993
@@ -229,7 +228,7 @@ plotly::ggplotly(p2)
 ```
 
 
-```{r, echo=F}
+```{r, echo=F,eval=F}
 # polygons flagged as change
 polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
 ```
@@ -237,7 +236,7 @@ polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID
 
 ### Polygon id: 6907
 
-```{r, echo=F}
+```{r, echo=F,eval=F}
 #---------------------#
 #filter to selected polygon and stat
 poly_id = 6907
@@ -265,14 +264,14 @@ plotly::ggplotly(p2)
 ```
 
 
-```{r, echo=F}
+```{r, echo=F,eval=F}
 # polygons flagged as change
 polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
 ```
 
 ### Polygon id: 14519
 
-```{r, echo=F}
+```{r, echo=F,eval=F}
 #---------------------#
 #filter to selected polygon and stat
 poly_id = 14519
@@ -300,14 +299,14 @@ plotly::ggplotly(p2)
 ```
 
 
-```{r, echo=F}
+```{r, echo=F,eval=F}
 # polygons flagged as change
 polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
 ```
 
 ### Polygon id: 3344
 
-```{r,echo=F}
+```{r,echo=F,eval=F}
 #---------------------#
 #filter to selected polygon and stat
 poly_id = 3344
@@ -335,14 +334,14 @@ plotly::ggplotly(p2)
 ```
 
 
-```{r, echo=F}
+```{r, echo=F,eval=F}
 # polygons flagged as change
 polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
 ```
 
 ### Polygon id: 3862
 
-```{r, echo=F}
+```{r, echo=F,eval=F}
 #---------------------#
 #filter to selected polygon and stat
 poly_id = 3862
@@ -370,7 +369,7 @@ plotly::ggplotly(p2)
 ```
 
 
-```{r, echo=F}
+```{r, echo=F,eval=F}
 # polygons flagged as change
 polygondat %>% dplyr::filter(get(paste0(stat,'change'))==1) %>% dplyr::select(ID,index,seasonyear,date)
 ```
