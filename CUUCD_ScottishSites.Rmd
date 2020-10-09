@@ -178,7 +178,7 @@ display_site(hes_site_2, hes_site_bounding_box)
 
 ```{r hessite2clean,eval=F}
 
-## Spatial framework 1 - 10m raster layer (Paula processed into shapefile)
+## Spatial framework 1 - 10m raster layer
 polys <- sf::st_read('1ha_grid_EUNISELCS_CUU_CD_Scottish_Sites_id_2.shp',quiet=T)
 
 #remove polygons under 100m

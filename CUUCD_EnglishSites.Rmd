@@ -95,7 +95,7 @@ display_site(dark_peak_site, dark_peak_bounding_box)
 
 ### Formatting Spatial Framework layer 
 
-Spatial Framework taken from Natural England's Priority Habitat Inventory (PHI) Map. Paula wishes to keep the polygons where no main priority habitat is listed or there is "No main habitat but additional habitats present". It won't be possible to create change thresholds for these as this is based on mean indices values across each habitat. 
+Spatial Framework taken from Natural England's Priority Habitat Inventory (PHI) Map. keep the polygons where no main priority habitat is listed or there is "No main habitat but additional habitats present". It won't be possible to create change thresholds for these as this is based on mean indices values across each habitat. 
 
 Removed 7053 polygons with area less than 100m^2^ and added row numbers as an unique polygon_id. 31,462 polygons included
 
@@ -187,7 +187,7 @@ display_site(malven_hills_site, malven_hills_bounding_box )
 
 ### Formatting Spatial Framework layer 
 
-These are taken from Natural England's Priority Habitat Inventory (PHI) Map. Paula wishes to keep the polygons where no main priority habitat is listed or there is "No main habitat but additional habitats present". It won't be possible to create change thresholds for these as this is based on mean indices values across each habitat. 
+These are taken from Natural England's Priority Habitat Inventory (PHI) Map. keep the polygons where no main priority habitat is listed or there is "No main habitat but additional habitats present". It won't be possible to create change thresholds for these as this is based on mean indices values across each habitat. 
 
 Removed 2807 polygons with area less than 100m^2^ and added row numbers as an unique polygon_id. 13,814 polygons included
 
