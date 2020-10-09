@@ -252,7 +252,9 @@ change_stats(sitefile = paste0(dir_path,'output/malvern_hills/ZonalStats/Malvern
 ```
 
 
-## extra processing steps for the english spatial framework
+## Extra processing steps for the english spatial framework
+
+These are additional processing steps for the english frameworks only specific to cleaning features in the shapefile. This is carried out before inclusion in the app.
 
 # Create a look-up table of Living England polygon ID against app polygon ID
 
