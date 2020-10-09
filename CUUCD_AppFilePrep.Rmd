@@ -1,0 +1,156 @@
+---
+title: "CUU_ChangeDetection Preparing data for the app"
+date: '09/10/2020'
+output:
+  html_document:
+    df_print: paged
+    css: style.css
+    includes:
+      before_body: header.html
+  pdf_document: default
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+## Creating thumbnail legends
+
+The 'legend_thumbnail' code in the 'habitat_change_detection_functions.R' script will create images containing the legends for the indices thumbnails created in the zonal stats function. This is run using the below code. The legends for the RVI and RVIv are slightly different with edges tacked on in order to show that the min and max values are beyond the break range of the colour palette stretch.This was in order to display the variation in the data better.
+
+```{r legendprep,eval=F}
+
+lookup <- tibble::tribble(~index,~breaks,~palette,~contlabel,~fixedlabel,
+                          "NDVI", seq(-1,1,by=0.2),terrain.colors(10,rev=T),
+                          c("-1","","-0.6","","","0","","","0.6","","1"),
+                          c("-1","","","","","0","","","","1"),
+                          "NDWI",seq(-1,1,by=0.2),"Blues",
+                          c("-1","","-0.6","","","0","","","0.6","","1"),
+                          c("-1","","","","","0","","","","1"),
+                          "NDMI",seq(-1,1,by=0.2),"Purples",
+                          c("-1","","-0.6","","","0","","","0.6","","1"),
+                          c("-1","","","","","0","","","","1"),
+                          "RVI", seq(0.9,1.7,by=0.1),"viridis",
+                          c("","1","","","1.3","","","1.6",""),
+                          c("","1","","","1.3","","1.6",""),
+                          "RVIv",seq(-0.2,4.2,by=0.2),c("#440154FF",viridis(10),"#FDE725FF"),
+                          c("","0","","","","","1","","","","","2","","","","","3","","","","","4",""), 
+                          c("0","","","","","1","","","","","2","","","","","3","","","","","4","","","","5"))
+
+# load in raster template layers for the relevant indices
+#s2
+r <- "SEN2_20150628_lat54lon368_T30UVE_ORB077_utm30n_osgb_vmsk_sharp_rad_srefdem_stdsref_CorsBodeilio_msk_NDVI.tif"
+#s1
+r <- "S1B_20161002_30_asc_175722_175747_VVVH_G0_GB_OSGB_RTCK_SpkRL_CorsBodeilio_RVI.tif"
+
+#iterate through the indices
+purrr::map(lookup$index, .f=function(ind){
+  indexbreak <- lookup %>% dplyr::filter(index==ind)
+
+legend_thumbnail(r, index=indexbreak$index,breaks=unlist(indexbreak$breaks),palette=unlist(indexbreak$palette),
+                 outfolder='./Index_legends/',
+                 labels=unlist(indexbreak$contlabel),continuous=T)
+})
+
+
+```
+
+
+## Make edits to the text files
+
+This runs through two file edit functions:
+
+* fileEdit - Function to edit the zonal stats txt files to remove additional rownames column and add a monthdate column
+* fileEdit2 - Function to write the habitat names into the zonal stats txt files
+
+
+```{r filedits,eval=F}
+source('./HabChangeDetection/R/')
+## Appy this fileEdit function across all files - edit the zonal stats txt files to Remove the additional rownames column and add in the monthdate column if it's missing
+fls <- list.files("./data/", full.names = T, recursive = T)
+## Subset the files if necessary
+# fls <- fls[grepl(fls, pattern = "peak")]
+out <- pbapply::pblapply(fls, fileEdit)
+
+
+## Appy this fileEdit2 function across all the zonal stats files - writes the habitat names into the zonal stats txt files
+fls <- list.files("./data", full.names = T, recursive = T)
+## Subset if necessary
+#fls <- fls[grepl(fls, pattern = "peak")]
+config <- yaml::read_yaml('./config.yaml')
+out <- pbapply::pblapply(fls, fileEdit2, config)
+
+```
+
+
+## Flag Change in the summarised statistics
+
+Use the polygon and habitat level statistics to calculate change
+
+```{r flagchange,eval=F}
+
+## List zonal stats folders
+files <- c('./data/corsbodeilio/phase1/monthly/zonal_stats/',
+           './data/corsbodeilio/phase1/seasonal/zonal_stats/',
+           './data/rhostonyrefail/phase1/monthly/zonal_stats/',
+           './data/rhostonyrefail/phase1/seasonal/zonal_stats/',
+           './data/darkpeak/phi/monthly/zonal_stats/',
+           './data/darkpeak/phi/seasonal/zonal_stats/',
+           './data/malvernhills/phi/monthly/zonal_stats/',
+           './data/malvernhills/phi/seasonal/zonal_stats/',
+           './data/flandersmoss/eunis/monthly/zonal_stats/',
+           './data/flandersmoss/eunis/seasonal/zonal_stats/',
+           './data/flandersmoss/hagrid/monthly/zonal_stats/',
+           './data/flandersmoss/hagrid/seasonal/zonal_stats/',
+           './data/inshmarshes/eunis/monthly/zonal_stats/',
+           './data/inshmarshes/eunis/seasonal/zonal_stats/',
+           './data/inshmarshes/hagrid/monthly/zonal_stats/',
+           './data/inshmarshes/hagrid/seasonal/zonal_stats/',
+           './data/skyreburn/eunis/monthly/zonal_stats/',
+           './data/skyreburn/eunis/seasonal/zonal_stats/',
+           './data/skyreburn/hagrid/monthly/zonal_stats/',
+           './data/skyreburn/hagrid/seasonal/zonal_stats/',
+           './data/hes2/eunis/monthly/zonal_stats/',
+           './data/hes2/eunis/seasonal/zonal_stats/',
+           './data/hes2/hagrid/monthly/zonal_stats/',
+           './data/hes2/hagrid/seasonal/zonal_stats/')
+
+## List indices
+indices <- c('NDVI', 'NDWI', 'NDMI', 'RVI', 'RVIv')
+
+# run flag change function
+flag_change(files, indices)
+
+```
+
+## Create an index of names
+
+Create a list of “raw” S1/S2 tifs, and index tifs, to use to query AWS
+
+```{r indexlist,eval=F}
+## Load packages
+require(tidyverse)
+
+## List all files in the indices folder
+flsList <- list.files("../indices", full.names = T, recursive = T)
+
+## Remove the leading filepath
+flsList <- gsub(flsList, pattern = "\\Q../\\E", replacement = "")
+
+## Create a tibble of paths
+flsList <- tibble::tibble(PATH = flsList)
+
+## Extract the site, index, and file names to add to separate columns
+flsList <- flsList %>%
+  dplyr::mutate(SITE = stringr::str_split(PATH, pattern = "/", simplify = T)[,2],
+         INDEX = stringr::str_split(PATH, pattern = "/", simplify = T)[,4],
+         FILE = stringr::str_split(PATH, pattern = "/", simplify = T)[,5])
+
+## Write the list of imagery out
+readr::write_csv(flsList, "./imageryList.csv")
+
+
+```
+
