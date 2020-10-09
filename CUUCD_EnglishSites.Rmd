@@ -1,7 +1,13 @@
 ---
 title: "CUU_ChangeDetection English sites"
-date: '`r Sys.Date()`'
-output: html_document
+date: "09/10/2020"
+output:
+  html_document:
+    df_print: paged
+    css: style.css
+    includes:
+      before_body: header.html
+  pdf_document: default
 always_allow_html: yes
 ---
 
@@ -243,6 +249,67 @@ change_stats(sitefile = paste0(dir_path,'output/malvern_hills/ZonalStats/Malvern
              polygons = paste0(dir_path,'segmentation/England/MalvernHills_LE_Segments_PHI_SpaJoin_25m_formatted.shp'),
              polyid = 'polygon_id',
              habclass = 'main_habit')
+```
+
+
+## extra processing steps for the english spatial framework
+
+# Create a look-up table of Living England polygon ID against app polygon ID
+
+```{r make_LE_LuT.R}
+
+
+## Read in the SFs for the English sites
+darkpeak <- sf::read_sf("DarkPeak_LE_Segments_Spatialjoin_10m_formatted.shp")
+malvern <- sf::read_sf("MalvernHills_LE_Segments_PHI_SpaJoin_25m_formatted.shp")
+
+## Create a unique lookup table between polygon ID and Living England ID for Dark Peak
+darkpeak <- darkpeak %>%
+  sf::st_drop_geometry() %>%
+  dplyr::select(polygon_id, ID) %>%
+  dplyr::rename(POLYID=polygon_id, LEID=ID) %>%
+  dplyr::mutate(LEID = as.integer(LEID)) %>%
+  dplyr::distinct()
+
+## Create a unique lookup table between polygon ID and Living England ID for Malvern
+malvern <- malvern %>%
+  sf::st_drop_geometry() %>%
+  dplyr::select(polygon_id, ID) %>%
+  dplyr::rename(POLYID=polygon_id, LEID=ID) %>%
+  dplyr::mutate(LEID = as.integer(LEID))%>%
+  dplyr::distinct()
+
+## Write the files out
+readr::write_csv(darkpeak, "./data/darkpeak/phi/spatial_framework/darkpeak_LEID.txt")
+readr::write_csv(malvern, "./data/malvernhills/phi/spatial_framework/malvernhills_LEID.txt")
+
+```
+
+
+#Remove unnecessary habitat types from English site txt files
+
+```{r removeEnglandNoHabitat}
+## Load packages
+require(tidyverse)
+
+## List files 
+fls <- list.files("data/darkpeak/", pattern = ".txt$", full.names = T, recursive = T)
+
+## For each file, remove entries for "No main priority habitat" and "No main habitat but additional habitats present"
+for(i in 1:length(fls)){
+  tmp <- suppressMessages(readr::read_csv(fls[i]))
+  
+  if("get(habclass)" %in% colnames(tmp)){
+    tmp <- tmp %>%
+      filter(!(`get(habclass)` %in% c("No main priority habitat", "No main habitat but additional habitats present")))
+  } else{
+    tmp <- tmp %>%
+    dplyr::filter(!(HABITAT %in% c("No main priority habitat", "No main habitat but additional habitats present")))
+  }
+  
+  ## Write new txt file out, replacing the old one
+  readr::write_csv(tmp, path = fls[i])
+}
 ```
 
 
