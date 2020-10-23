@@ -1,6 +1,8 @@
 ---
 title: "CUU Habitat Change - Analysis of statistics for flagging change"
 date: "08/09/2020"
+author: 'JNCC'
+licence: 'MIT licence'
 output:
   html_document:
     toc: true

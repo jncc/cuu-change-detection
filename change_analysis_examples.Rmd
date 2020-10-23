@@ -1,6 +1,8 @@
 ---
 title: "CUU Habitat Change - Analysis of change flag"
 date: "12/08/2020"
+author: 'JNCC'
+licence: 'MIT licence'
 output:
   html_document:
     df_print: paged

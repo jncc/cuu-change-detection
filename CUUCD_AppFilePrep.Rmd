@@ -1,6 +1,8 @@
 ---
 title: "CUU_ChangeDetection Preparing data for the app"
 date: '09/10/2020'
+author: 'JNCC'
+licence: 'MIT licence'
 output:
   html_document:
     df_print: paged
